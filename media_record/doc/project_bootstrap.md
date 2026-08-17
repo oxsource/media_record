@@ -1,4 +1,4 @@
-# Media Camera - Project Bootstrap
+# Media Record - Project Bootstrap
 
 > Version: 0.2
 >
@@ -12,7 +12,7 @@
 
 ## 1.1 Project Vision
 
-Media Camera 是一套**跨平台多路摄像头记录仪框架（Cross-Platform Multi-Camera Recorder Framework）**，面向行车记录仪（DVR）、环视（AVM）、运动相机等场景。
+Media Record 是一套**跨平台多路摄像头记录仪框架（Cross-Platform Multi-Camera Recorder Framework）**，面向行车记录仪（DVR）、环视（AVM）、运动相机等场景。
 
 项目**组合复用**现有三个独立 Bazel 仓库的能力，通过 **graph_runtime 配置驱动的节点图（Configurable Node Graph）** 编排出一条完整的记录仪流水线：
 
@@ -204,7 +204,7 @@ deps = [
 
 ```
 ┌──────────────────────────────────────────────────────────────────────┐
-│                 media_camera (Composition Layer — 全部为 Node)         │
+│                 media_record (Composition Layer — 全部为 Node)         │
 │                                                                       │
 │   JSON GraphConfig ──► GraphBuilder ──► GraphRuntime (scheduling)     │
 │                                        │                              │
@@ -351,10 +351,10 @@ ui_overlay ◄──(RenderContext on)── ctx.encoder_input_surface()
 
 ## 3.8 Directory Structure
 
-与 graph_runtime / native_ui / video_codec 的仓库布局对齐：源码根为仓库同名内层目录（`media_camera/media_camera/`），`doc/` 位于其下，`specs/` 位于仓库根：
+与 graph_runtime / native_ui / video_codec 的仓库布局对齐：源码根为仓库同名内层目录（`media_record/media_record/`），`doc/` 位于其下，`specs/` 位于仓库根：
 
 ```
-media_camera/                         (repo root)
+media_record/                         (repo root)
 ├── AGENTS.md
 ├── CHANGELOG.md
 ├── specs/                            (spec-kit 规格目录，001-xxx)
@@ -363,23 +363,24 @@ media_camera/                         (repo root)
 │       ├── contracts/
 │       ├── checklists/
 │       └── research.md / data-model.md / quickstart.md
-└── media_camera/                     (源码根，workspace(name = "media_camera"))
+└── media_record/                     (源码根，workspace(name = "media_record"))
     ├── WORKSPACE
-    ├── BUILD.bazel                   (root alias: //:camera → //src/public:camera)
+    ├── BUILD.bazel                   (root alias: //:media_record → //src/framework/public:media_record)
     ├── .bazelversion                 (6.5.0)
     ├── .bazelrc
-    ├── media_camera_deps.bzl         (外部依赖 bootstrap：graph_runtime / native_ui / video_codec)
+    ├── media_record_deps.bzl         (外部依赖 bootstrap：graph_runtime / native_ui / video_codec)
     ├── platforms/
     │   ├── BUILD
     │   └── platforms.bzl             (config_setting + platform + select 宏)
     ├── src/
-    │   ├── public/
-    │   │   ├── BUILD                 (汇总 target，strip_include_prefix)
-    │   │   └── include/
-    │   │       └── media_camera/
-    │   │           ├── media_camera.h (umbrella header)
-    │   │           ├── media_camera_export.h
-    │   │           └── node.h        (节点基类与公共节点工厂)
+    │   ├── framework/
+    │   │   └── public/
+    │   │       ├── BUILD              (汇总 target，strip_include_prefix)
+    │   │       └── include/
+    │   │           └── media_record/
+    │   │               ├── media_record.h (umbrella header)
+    │   │               ├── media_record_export.h
+    │   │               └── node.h     (节点基类与公共节点工厂)
     │   ├── nodes/
     │   │   ├── stream_input/         (接收接口 + 图像模拟源)
     │   │   ├── signal_source/        (信号模拟 / 透传)
@@ -468,7 +469,7 @@ stream_input ── Packet<VideoFrame> ──► multi_view_layout ──► ui_
 
 一期完成后应具备：
 
-- media_camera 组合层 Library（节点库 + 汇总 public target）。
+- media_record 组合层 Library（节点库 + 汇总 public target）。
 - JSON 配置驱动：`recorder.json` / `stream.json` 描述记录仪与推流流水线。
 - 基础节点：`StreamInputNode`（含图像模拟源）、`SignalSourceNode`、`MultiViewLayoutNode`、`UiOverlayNode`（时间戳 / 事件）、`VideoEncoderNode`（含 surface 反馈）、`RecorderNode`（缓存池 / 切换 / 防抖 / 超时停止）、`MuxerSinkNode`、`StreamSinkNode`（一种协议）、`PreviewNode`。
 - 端到端示例 `recorder_demo`：四路模拟输入 → 2×2 布局 → OSD → H.264 → 循环 / 事件录像 → MP4。
@@ -488,7 +489,7 @@ stream_input ── Packet<VideoFrame> ──► multi_view_layout ──► ui_
 - 事件录像正确锁定前后窗口；模拟磁盘故障时触发缓存池兜底、超时停止与防抖恢复。
 - Android 编码走 encoder input surface 反馈零拷贝闭环，host 回退 CPU 帧路径且行为一致。
 - 推流服务示例可独立运行并与录制并行。
-- media_camera 只依赖三个库的公共 umbrella header，无内部实现耦合。
+- media_record 只依赖三个库的公共 umbrella header，无内部实现耦合。
 - 摄像头设备管理不进入本仓库（仅接收流接口 + 模拟源）。
 
 ---
@@ -509,8 +510,8 @@ stream_input ── Packet<VideoFrame> ──► multi_view_layout ──► ui_
 | Variable        | `snake_case`       | `int stream_index`   |
 | Member variable | `snake_case_`      | `int stream_index_`  |
 | Constant        | `kPascalCase`      | `const int kCachePoolMb` |
-| Namespace       | `snake_case`       | `namespace media::camera` |
-| Macro           | `UPPER_SNAKE_CASE` | `MEDIA_CAMERA_API`   |
+| Namespace       | `snake_case`       | `namespace media::record` |
+| Macro           | `UPPER_SNAKE_CASE` | `MEDIA_RECORD_API`   |
 
 ### Formatting
 
@@ -543,18 +544,18 @@ docs(bootstrap): update project bootstrap
 
 ## 6.3 Public API Export Macro
 
-参考三个库的导出宏模式（`GRAPH_RUNTIME_API` / `NATIVE_UI_API` / `VIDEO_CODEC_API`），本项目使用 `MEDIA_CAMERA_API` 控制符号可见性。
+参考三个库的导出宏模式（`GRAPH_RUNTIME_API` / `NATIVE_UI_API` / `VIDEO_CODEC_API`），本项目使用 `MEDIA_RECORD_API` 控制符号可见性。
 
 ### Public Header Layout
 
 ```
-src/public/include/media_camera/
-├── media_camera.h             (umbrella header)
-├── media_camera_export.h      (export macro)
+src/framework/public/include/media_record/
+├── media_record.h             (umbrella header)
+├── media_record_export.h      (export macro)
 └── node.h                     (节点基类与公共节点工厂)
 ```
 
-外部消费者只需 `#include "media_camera/media_camera.h"`。
+外部消费者只需 `#include "media_record/media_record.h"`。
 
 ---
 
@@ -562,11 +563,11 @@ src/public/include/media_camera/
 
 ## 7.1 依赖声明
 
-三个仓库以 Bazel 外部依赖形式引入，统一在 `media_camera_deps.bzl` 中管理（参考各库自身的 `*_deps.bzl`）：
+三个仓库以 Bazel 外部依赖形式引入，统一在 `media_record_deps.bzl` 中管理（参考各库自身的 `*_deps.bzl`）：
 
 ```python
-# media_camera_deps.bzl
-def media_camera_deps():
+# media_record_deps.bzl
+def media_record_deps():
     if not native.existing_rule("graph_runtime"):
         http_archive(name = "graph_runtime", ...)
     if not native.existing_rule("native_ui"):
@@ -586,7 +587,7 @@ def media_camera_deps():
 ## 7.3 常用命令
 
 ```bash
-bazel build //src/public:camera            # 组合层 Library
+bazel build //src/framework/public:media_record   # 组合层 Library
 bazel build //src/examples:recorder_demo   # 记录仪示例
 bazel build //src/examples:stream_demo     # 推流服务示例
 bazel test //...                           # 全部测试
