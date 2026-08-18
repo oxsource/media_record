@@ -1,0 +1,88 @@
+# Contract: 7 类节点实现
+
+**Branch**: `002-dashcam-sim-recording` | **Date**: 2026-08-18 | **Spec**: [spec.md](../spec.md)
+
+## 1. 范围
+
+recorder.json 引用的 7 类节点实现为**可运行的真实实现**（替换 001 占位骨架）；`AudioEncoder` / `StreamSink` / `Preview` 保持骨架不变。
+
+## 2. 通用规则
+
+| # | 规则 |
+|---|------|
+| N-1 | 每个节点实现 `media::record::Node`（Open/Process/Close）并通过 `REGISTER_NODE("NodeType", Class)` 注册，type 名与 recorder.json / dashcam_record.json 完全一致 |
+| N-2 | 节点经 `PipelineRunner` 编排：只读写自己声明的 input/output 流（tag:stream_name），不做跨节点直接调用 |
+| N-3 | 帧数据统一 `media::record::Packet` 传输；视频帧为 `video::codec::VideoFrame`（RGBA） |
+| N-4 | 失败必须在错误信息中**命名节点 + 具体原因**（FR-008 可定位错误） |
+
+## 3. 节点契约
+
+### 3.1 StreamInputNode
+
+| 项 | 值 |
+|----|-----|
+| output | `output:frames` → `Packet<VideoFrame>`（RGBA） |
+| options | `image`（默认 `assets/dashcam_default.png`）、`width`/`height`（默认跟随图片）、`fps`（30） |
+| 行为 | `Open` 解码图片并校验；每 `Process` 产出一帧（复制图片 + 打真实时钟时间戳 + pts），直到会话帧数达标返回完成 |
+| 失败 | 图片缺失 / 格式不支持 → 报错含路径 |
+
+### 3.2 SignalSourceNode
+
+| 项 | 值 |
+|----|-----|
+| output | `output:signals` → `Packet<SignalEvent>` |
+| 行为 | 按周期（如每帧 / 每秒）产出最小 `SignalEvent`（`kTick`），旁路给 OSD |
+| 失败 | 无（纯生成器） |
+
+### 3.3 MultiViewLayoutNode
+
+| 项 | 值 |
+|----|-----|
+| input | `f:frames`（本期单路，f/r 预留） |
+| output | `output:view_frames` → `Packet<VideoFrame>`（RGBA） |
+| 行为 | 单视图：将输入帧排布为整帧画布（尺寸=配置分辨率）；不实现多路拼接 |
+| 失败 | 输入缺失 → 报错命名节点 |
+
+### 3.4 UiOverlayNode
+
+| 项 | 值 |
+|----|-----|
+| input | `video:view_frames`、`signal:signals` |
+| output | `output:osd_frames` → `Packet<VideoFrame>`（RGBA） |
+| options | `format`（默认 `%Y-%m-%d %H:%M:%S`）、`position`（默认右下角） |
+| 行为 | 以位图字体在帧上绘制真实时钟时间戳（每帧取 `system_clock`）；事件输入本期不渲染（扩展点） |
+| 失败 | 输入缺失 → 报错命名节点 |
+
+### 3.5 VideoEncoderNode
+
+| 项 | 值 |
+|----|-----|
+| input | `input:osd_frames` |
+| output | `output:es_packets` → `Packet<VideoPacket>`（Annex-B） |
+| 行为 | RGBA→I420（libyuv `ARGBToI420`）→ `CodecFactory::CreateVideo`（H.264, 30fps）→ 逐帧 `Encode` → 结束 `Flush` |
+| 失败 | 编码器不可用 / 编码失败 → `kEncodeFailed`，命名节点 |
+
+### 3.6 RecorderNode
+
+| 项 | 值 |
+|----|-----|
+| input | `input:es_packets` |
+| output | `output:clips` → `Packet<VideoPacket>`（透传） |
+| options | `duration_seconds`（10）、`fps`（30） |
+| 行为 | 会话生命周期（单会话单分段）：帧计数达标后触发 finalize；转发包给 muxer |
+| 失败 | 会话异常 → `kFailed` + 命名节点 |
+
+### 3.7 MuxerSinkNode
+
+| 项 | 值 |
+|----|-----|
+| input | `input:clips` → `Packet<VideoPacket>` |
+| options | `output`（默认 `out/dashcam.mp4`） |
+| 行为 | 用 vendored FFmpeg（libavformat mov muxer）写 MP4：临时文件写入 → trailer → 原子 rename；覆盖旧文件并提示 |
+| 失败 | 输出目录不可写 / muxer 失败 → 报错含路径 + 删除临时文件 + 退出非零（FR-009） |
+
+## 4. 验收
+
+- `bazel build //...` 全部节点目标编译链接通过。
+- 默认配置录制产物为可播放 MP4，含 `ftyp` / `moov` / `mdat`（端到端测试断言）。
+- 任一失败场景返回非零并给出含节点名/路径的可定位错误。
