@@ -12,7 +12,9 @@ local_repository(
     name = "media_record",
     path = "/path/to/codes/media_record/media_record",   # 内层 workspace 目录
 )
-load("@media_record//:media_record_deps.bzl", "media_record_setup")
+load("@media_record//:media_record_deps.bzl", "media_record_deps")
+media_record_deps()
+load("@media_record//:media_record_setup.bzl", "media_record_setup")
 media_record_setup()
 ```
 

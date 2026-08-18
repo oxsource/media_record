@@ -1,0 +1,9 @@
+package(default_visibility = ["//visibility:public"])
+
+# Node registration base implementation placeholder (spec 001).
+# Business nodes implement the Node contract from
+# //src/framework/public:media_record and register via REGISTER_NODE.
+cc_library(
+    name = "node",
+    visibility = ["//visibility:public"],
+)

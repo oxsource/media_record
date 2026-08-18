@@ -1,0 +1,44 @@
+build --cxxopt=-std=c++17
+build --host_cxxopt=-std=c++17
+build --features=visibility=hidden
+
+# Auto-detect host platform
+build --enable_platform_specific_config
+
+# macOS sandbox has issues with external repository file mapping
+# (cf. native_ui/.bazelrc): relative -iquote paths of http_archive deps (skia,
+# ...) do not resolve inside the darwin sandbox. Run actions locally instead.
+build --spawn_strategy=local
+
+# Shared caches (outside the output base, so they survive `bazel clean`):
+#   * disk_cache keeps action outputs (incl. the configure_make FFmpeg build),
+#     so a clean rebuild restores them from cache instead of re-running.
+#   * repository_cache avoids re-downloading http_archive sources.
+# Aligned with video_codec/.bazelrc.
+common --disk_cache=~/.cache/bazel/disk
+common --repository_cache=~/.cache/bazel/repository
+
+# Platform aliases
+build:macos_arm64    --platforms=//platforms:macos_arm64_platform
+build:macos_x86_64   --platforms=//platforms:macos_x86_64_platform
+build:linux_x86_64   --platforms=//platforms:linux_x86_64_platform
+build:linux_aarch64  --platforms=//platforms:linux_aarch64_platform
+
+# Android cross-compilation (NDK via rules_android_ndk, aligned with native_ui/video_codec)
+build:android                --incompatible_enable_cc_toolchain_resolution
+build:android --linkopt=-landroid
+build:android --linkopt=-ldl
+build:android --linkopt=-llog
+build:android --linkopt=-lm
+build:android --linkopt=-Wl,--gc-sections
+build:android_arm64          --config=android
+build:android_arm64          --platforms=//platforms:android_arm64_platform
+build:android_arm64          --extra_toolchains=@androidndk//:toolchain_aarch64-linux-android
+
+# Default to macOS ARM64 for development
+build --platforms=//platforms:macos_arm64_platform
+
+test --test_output=errors
+
+# Machine-local / CI-generated overrides (git-ignored)
+try-import %workspace%/.user.bazelrc

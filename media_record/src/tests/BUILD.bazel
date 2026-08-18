@@ -1,0 +1,28 @@
+package(default_visibility = ["//visibility:public"])
+
+# Pipeline template validation (spec 001 US3, task T025).
+cc_test(
+    name = "pipeline_config_test",
+    size = "small",
+    srcs = ["pipeline_config_test.cc"],
+    data = ["//src/examples/configs:configs"],
+    deps = [
+        "//src/framework/config:config",
+        "@com_google_googletest//:gtest_main",
+    ],
+)
+
+# Cross-library dependency smoke test (spec 001 US3, task T026). The single
+# place that links all three capability repos against the media_record skeleton.
+cc_test(
+    name = "deps_smoke_test",
+    size = "small",
+    srcs = ["deps_smoke_test.cc"],
+    deps = [
+        "//src/framework/public:media_record",
+        "@com_google_googletest//:gtest_main",
+        "@graph_runtime//src/framework/public:runtime",
+        "@native_ui//:native_ui",
+        "@video_codec//src/framework/public:video_codec",
+    ],
+)

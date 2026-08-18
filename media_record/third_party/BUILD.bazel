@@ -1,0 +1,16 @@
+# media_record third-party build shims
+#
+# The three local_repository deps (graph_runtime / native_ui / video_codec)
+# fetch their http_archive transitive deps via their *_setup() functions. Those
+# functions reference build_file labels like "//third_party:skia.BUILD" which
+# Bazel resolves against the *main* workspace (this one), not the dep repo. This
+# package provides copies of those build wrappers so the fetch succeeds when
+# media_record is the main workspace.
+#
+# Provenance (keep in sync when the upstream repos change their wrappers):
+#   - skia.BUILD / yoga.BUILD / stblib.BUILD / nanosvg.BUILD
+#       <- native_ui/native_ui/third_party/
+#   - ffmpeg/BUILD.bazel, libyuv/BUILD.bazel
+#       <- video_codec/codec/third_party/
+#   - nlohmann_json/BUILD.bazel
+#       <- graph_runtime/graph_runtime/third_party/

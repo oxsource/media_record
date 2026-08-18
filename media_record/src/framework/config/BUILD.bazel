@@ -1,0 +1,19 @@
+package(default_visibility = ["//visibility:public"])
+
+# Pipeline template loader + validator (spec 001 US3).
+# Self-contained (stdlib only): a minimal JSON parser plus the graph_runtime
+# native-schema pipeline model. Consumed by examples (hello_graph) and tests
+# (pipeline_config_test). Type-registration checks are injected by callers, so
+# this library never depends on the public node registry.
+cc_library(
+    name = "config",
+    srcs = [
+        "json.cc",
+        "pipeline_config.cc",
+    ],
+    hdrs = [
+        "json.h",
+        "pipeline_config.h",
+    ],
+    visibility = ["//visibility:public"],
+)

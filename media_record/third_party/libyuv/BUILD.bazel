@@ -1,0 +1,23 @@
+package(default_visibility = ["//visibility:public"])
+
+# Google libyuv (BSD), pinned to a mirror commit in video_codec_deps.bzl.
+# Platform-specific row/scale/rotate files self-guard with `#if defined(...)`,
+# so a plain glob compiles on every host (Windows-only bodies are empty on
+# non-MSVC; NEON bodies are empty on non-aarch64).
+cc_library(
+    name = "libyuv",
+    srcs = glob(["source/*.cc"]),
+    hdrs = glob(["include/libyuv/*.h"]),
+    includes = ["include"],
+    # row_neon64.cc uses i8mm (sudot/usdot) inline asm without a feature guard;
+    # Apple clang does not enable i8mm by default on arm64, so opt in via
+    # -march. row_sve.cc compiles SVE2 code under LIBYUV_DISABLE_SVE guard and
+    # Apple hardware has no SVE, so exclude it. Neutral on other CPUs.
+    copts = select({
+        "@platforms//cpu:aarch64": [
+            "-march=armv8.5-a+i8mm",
+            "-DLIBYUV_DISABLE_SVE",
+        ],
+        "//conditions:default": [],
+    }),
+)

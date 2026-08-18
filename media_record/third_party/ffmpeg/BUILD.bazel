@@ -1,0 +1,137 @@
+load("@rules_foreign_cc//foreign_cc:configure.bzl", "configure_make")
+
+package(default_visibility = ["//visibility:public"])
+
+# Expose the full FFmpeg 6.1 source tree to foreign_cc (it globs the unpacked
+# http_archive so configure_make can copy it into its build sandbox).
+filegroup(
+    name = "ffmpeg_source",
+    srcs = glob(["**/*"]),
+)
+
+# Build a minimal FFmpeg (libavcodec + libavutil + libavformat + libswresample)
+# with the libx264 encoder enabled, using the NDK-free host toolchain. Output is
+# a static lib + headers that the ffmpeg_spike (and the real backend/ffmpeg) can
+# consume. libavformat is required for the MP4 muxer consumer
+# (consumer/mp4_consumer); libswresample powers the audio sample-format converter
+# (backend/ffmpeg/swr).
+#
+# Why static + BSD-merged (not shared, not GNU-ar):
+#  * A shared .dylib under rules_foreign_cc bakes the very long sandbox install
+#    prefix into each dylib's LC_ID_DYLIB, overflowing the cmdsize FFmpeg
+#    reserves and corrupting the Mach-O. No per-library way to shorten it.
+#  * FFmpeg's installed libavcodec.a / libavutil.a are GNU-format on this host
+#    (Homebrew binutils `ar` wins on PATH), which macOS ld64 rejects ("archive
+#    member invalid control bits"). Merging both into one BSD-format archive via
+#    /usr/bin/libtool sidesteps the format mismatch.
+#  * NEON must stay ENABLED: the file that defines _ff_prefetch_aarch64 is NEON
+#    assembly; --disable-neon removes its definition while other code still
+#    references it, leaving the symbol undefined (dyld "symbol not found in flat
+#    namespace"). With NEON on, the symbol is compiled in; the consumer then
+#    force-loads the whole archive so no member is lazily dropped.
+#
+# x264 currently comes from the dev host's Homebrew install (via pkg-config and
+# explicit extra flags / linkopts) to keep the build hermetic-host-only. A fully
+# hermetic build would add x264 as its own rules_foreign_cc target and point
+# --extra-cflags/--extra-ldflags at its outputs.
+configure_make(
+    name = "ffmpeg_codec_impl",
+    lib_source = "@ffmpeg//:ffmpeg_source",
+    configure_command = "configure",
+    configure_options = [
+        # We build libavcodec + libavutil + libavformat (avformat for the MP4
+        # muxer consumer). Other libraries are disabled below. We do NOT use
+        # --disable-everything:
+        # that strips the aarch64 helper assembly (e.g. prefetch.S, which
+        # defines _ff_prefetch_aarch64) along with its DSP users, leaving the
+        # symbol referenced-but-undefined and dyld failing at load. Keeping
+        # codecs/optimizations enabled ensures the helper is compiled in.
+        "--disable-avdevice",
+        "--disable-avfilter",
+        "--disable-postproc",
+        "--enable-swresample",
+        "--disable-swscale",
+        "--enable-avformat",
+        "--disable-network",  # only the file protocol + mp4 muxer; no sockets
+        "--enable-protocol=file",
+        "--enable-muxer=mov",  # mov muxer writes .mp4
+        "--enable-gpl",
+        "--enable-libx264",
+        "--enable-encoder=libx264",
+        "--enable-decoder=h264",
+        "--enable-parser=h264",
+        "--disable-programs",
+        "--enable-pic",
+        # Force NEON on. FFmpeg's configure mis-detects NEON availability under
+        # the relaxed host flags below, which drops the NEON-OBJS that define
+        # helpers such as _ff_prefetch_aarch64 (still referenced by generic
+        # aarch64 code) -- leaving the symbol undefined. Explicitly enabling it
+        # compiles prefetch.S in.
+        "--enable-neon",
+        # FFmpeg 6.1 predates clang that promotes implicit-function-declaration
+        # (and similar) to errors; relax so it compiles on the dev host.
+        # Quote the value: foreign_cc shells out configure, so without quotes the
+        # space-separated flags would be split into unknown configure options.
+        "--extra-cflags='-I/opt/homebrew/include -Wno-implicit-function-declaration -Wno-error=implicit-function-declaration -Wno-error=int-conversion -Wno-error=incompatible-function-pointer-types'",
+        "--extra-ldflags=-L/opt/homebrew/lib",
+    ],
+    env = {
+        "PKG_CONFIG_PATH": "/opt/homebrew/lib/pkgconfig",
+    },
+    targets = ["install"],
+    out_include_dir = "include",
+    # Emit a single merged static lib in BSD format (see comment above).
+    out_static_libs = ["libffmpeg.a"],
+    postfix_script = """
+set -e
+cd "$$INSTALLDIR$$/lib"
+# Merge the four archives directly. Do NOT extract with `ar -x` first: FFmpeg's
+# libavcodec.a contains two members that share the basename `videodsp.o` (one
+# from libavcodec/videodsp.c, one from libavcodec/aarch64/videodsp.S which
+# *defines* ff_prefetch_aarch64). `ar -x` flattens to basenames and silently
+# clobbers one, dropping that aarch64 definition. libtool -static flattens the
+# input archives while preserving every member (including duplicate names) and
+# writes BSD-format output that macOS ld64 accepts.
+/usr/bin/libtool -static -o libffmpeg.a libavcodec.a libavutil.a libavformat.a libswresample.a
+/usr/bin/ranlib libffmpeg.a
+rm -f libavcodec.a libavutil.a libavformat.a
+""",
+    # libx264 is not embedded in libavcodec.a (static archive); consumers must
+    # link it. Link the dev-host x264 here so the dependency is transitive.
+    linkopts = [
+        "-L/opt/homebrew/lib",
+        "-lx264",
+    ],
+)
+
+# configure_make declares two outputs (the static lib + an include dir), which
+# blocks $(execpath)/cc_import from resolving a single file. Collapse them into
+# one clean static-lib output here by copying just the .a.
+genrule(
+    name = "ffmpeg_codec_archive",
+    srcs = [":ffmpeg_codec_impl"],
+    outs = ["libffmpeg.a"],
+    cmd = "for f in $(locations :ffmpeg_codec_impl); do case \"$$f\" in *.a) cp \"$$f\" $@;; esac; done",
+)
+
+# Expose the merged archive as a cc_import so a cc_library can force-load it.
+# alwayslink makes Bazel emit -force_load for this library's objects when any
+# binary depends on it, pulling every member (e.g. the aarch64 helper
+# _ff_prefetch_aarch64) so nothing is lazily dropped at link time. The original
+# (lazily-linked) archive from ffmpeg_codec_impl contributes nothing new, so
+# there is no duplicate-symbol conflict.
+cc_import(
+    name = "ffmpeg_codec_import",
+    static_library = ":ffmpeg_codec_archive",
+)
+
+cc_library(
+    name = "ffmpeg_codec",
+    # media_record-side fix (deviation from the video_codec copy): declaring the
+    # raw headers as hdrs makes them part of the declared include set, so Bazel's
+    # include validation no longer flags them as "undeclared inclusion(s)" when
+    # video_codec's ffmpeg backend is consumed from an external workspace.
+    hdrs = glob(["**/*.h"]),
+    deps = [":ffmpeg_codec_import"],
+    alwayslink = True,
+)

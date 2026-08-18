@@ -1,0 +1,30 @@
+{
+  "nodes": [
+    {
+      "name": "cam_front",
+      "type": "StreamInputNode",
+      "output_streams": ["output:front_frames"]
+    },
+    {
+      "name": "cam_rear",
+      "type": "StreamInputNode",
+      "output_streams": ["output:rear_frames"]
+    },
+    {
+      "name": "layout",
+      "type": "MultiViewLayoutNode",
+      "input_streams": ["f:front_frames", "r:rear_frames"],
+      "output_streams": ["output:view_frames"]
+    },
+    {
+      "name": "preview",
+      "type": "PreviewNode",
+      "input_streams": ["input:view_frames"]
+    }
+  ],
+  "streams": [
+    { "name": "front_frames", "source_node": "cam_front", "source_port": "output", "dest_node": "layout", "dest_port": "f" },
+    { "name": "rear_frames", "source_node": "cam_rear", "source_port": "output", "dest_node": "layout", "dest_port": "r" },
+    { "name": "view_frames", "source_node": "layout", "source_port": "output", "dest_node": "preview", "dest_port": "input" }
+  ]
+}

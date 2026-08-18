@@ -1,0 +1,7 @@
+package(default_visibility = ["//visibility:public"])
+
+# Root alias — top-level entry point for external consumers.
+alias(
+    name = "media_record",
+    actual = "//src/framework/public:media_record",
+)

@@ -1,0 +1,23 @@
+package(default_visibility = ["//visibility:public"])
+
+# Config-driven example (spec 001 US3): loads a pipeline JSON template and
+# assembles/runs the node graph on the media_record skeleton.
+cc_binary(
+    name = "hello_graph",
+    srcs = ["hello_graph.cc"],
+    data = ["//src/examples/configs:configs"],
+    deps = [
+        "//:media_record",
+        "//src/framework/config:config",
+    ],
+)
+
+# Minimal consumer (task T015 / US1): includes the public umbrella header and
+# links the skeleton public library to verify it compiles standalone.
+cc_binary(
+    name = "consumer_demo",
+    srcs = ["consumer_demo.cc"],
+    deps = [
+        "//:media_record",
+    ],
+)

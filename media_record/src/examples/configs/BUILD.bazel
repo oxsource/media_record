@@ -1,0 +1,9 @@
+package(default_visibility = ["//visibility:public"])
+
+# Pre-built pipeline templates (spec 001 US3). Consumed as runfiles by the
+# hello_graph example and pipeline_config_test.
+filegroup(
+    name = "configs",
+    srcs = glob(["*.json"]),
+    visibility = ["//visibility:public"],
+)

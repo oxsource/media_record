@@ -1,0 +1,26 @@
+# Bazel
+bazel-*
+.bazelrc.user
+.user.bazelrc
+*.bazelrc.local
+
+# Build outputs
+out/
+bin/
+obj/
+build/
+*.o
+*.so
+*.dylib
+*.a
+*.exe
+*.dll
+
+# Local tooling
+.DS_Store
+Thumbs.db
+*.tmp
+*.swp
+.vscode/
+.idea/
+*.log

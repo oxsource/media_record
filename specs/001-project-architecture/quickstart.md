@@ -31,9 +31,9 @@ bazel build //... --config=linux_x86_64
 
 ```bash
 # 加载预置 pipeline 模板（记录仪 / 推流 / 预览）
-bazel run //src/examples:hello_graph -- --config=media_record/examples/configs/recorder.json
-bazel run //src/examples:hello_graph -- --config=media_record/examples/configs/stream.json
-bazel run //src/examples:hello_graph -- --config=media_record/examples/configs/preview.json
+bazel run //src/examples:hello_graph -- --config=src/examples/configs/recorder.json
+bazel run //src/examples:hello_graph -- --config=src/examples/configs/stream.json
+bazel run //src/examples:hello_graph -- --config=src/examples/configs/preview.json
 ```
 
 预期：recorder 模板启动最小节点图并正常退出（退出码 0）；stream / preview 模板解析校验通过（节点未实现时给出可定位提示）。

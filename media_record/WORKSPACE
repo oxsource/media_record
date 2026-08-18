@@ -1,0 +1,21 @@
+workspace(name = "media_record")
+
+load("//:media_record_deps.bzl", "media_record_deps")
+
+media_record_deps()
+
+load("//:media_record_setup.bzl", "media_record_setup")
+
+media_record_setup()
+
+# --- video_codec transitive setup (mirrors video_codec's own WORKSPACE) ------
+# video_codec builds FFmpeg from source via rules_foreign_cc. Its *_setup()
+# function registers the rules_foreign_cc repo; the *_dependencies() call below
+# (which registers rules_python and the foreign_cc toolchains) must run AFTER
+# that repo exists, hence this second WORKSPACE phase.
+load("@rules_foreign_cc//foreign_cc:repositories.bzl", "rules_foreign_cc_dependencies")
+
+rules_foreign_cc_dependencies(
+    register_built_tools = False,
+    register_built_pkgconfig_toolchain = False,
+)
