@@ -1,6 +1,7 @@
 # Pipeline 设计（Pipelines）
 
 > Spec 001（001-project-architecture）| 与 `contracts/pipeline-contract.md`、`research.md §6` 一致
+> 002（dashcam-sim-recording）实现记录仪 7 类节点：布局/OSD 用 native_ui flex 布局 + media_record 软件绘制进自有 RGBA 帧，编码复用 video_codec `VideoEncoder`，封装复用 video_codec `Muxer`（`FileByteSink`）；见 `specs/002-dashcam-sim-recording/`。
 
 ## 1. 概述
 

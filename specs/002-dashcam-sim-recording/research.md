@@ -12,11 +12,11 @@ recorder.json 引用 8 个节点实例、7 类节点类型。本期将 7 类节�
 |----------|---------------|----------------------|
 | `stream_input` | `StreamInputNode` | 解码默认图片 → 逐帧输出 `Packet<VideoFrame>`（RGBA），带真实时钟时间戳 |
 | `signal_source` | `SignalSourceNode` | 输出 `Packet<SignalEvent>`（本期输出最小事件序列，旁路给 OSD） |
-| `multi_view_layout` | `MultiViewLayoutNode` | 将单路输入排布为整帧画面（本期单视图；不实现多路拼接） |
-| `ui_overlay` | `UiOverlayNode` | 在画面角落以位图字体绘制时间戳文字（真实时钟，逐帧更新） |
-| `video_encoder` | `VideoEncoderNode` | RGBA→I420（libyuv）+ video_codec `VideoEncoder`（H.264）编码 |
+| `multi_view_layout` | `MultiViewLayoutNode` | 用 native_ui flex 布局（`Container` + `ExternalImage`）确定画面结构与位置，软件渲染基帧（本期单视图；不实现多路拼接） |
+| `ui_overlay` | `UiOverlayNode` | 以 flex 布局定位 + 软件位图字体绘制时间戳文字（真实时钟，逐帧更新），叠加于画面固定角落 |
+| `video_encoder` | `VideoEncoderNode` | 软件 RGBA→I420（media_record 内置）+ video_codec `VideoEncoder`（H.264）编码 |
 | `recorder` | `RecorderNode` | 录制会话生命周期（单会话单分段），帧计数 / 时长收敛，转发包给 muxer |
-| `muxer_sink` | `MuxerSinkNode` | 用 media_record 自带 FFmpeg（libavformat mov muxer）封装 H.264 → MP4 |
+| `muxer_sink` | `MuxerSinkNode` | 用 video_codec 公共面 `Muxer`（`FileByteSink`）封装 H.264 → MP4 |
 
 ### Rationale
 
@@ -36,58 +36,62 @@ recorder.json 引用 8 个节点实例、7 类节点类型。本期将 7 类节�
 - 构造：`CodecFactory::CreateVideo(VideoConfig)`，`cfg = { codec: kH264, width, height, fps: 30, input_format: kI420, backend: kAuto }`。
 - 编码：`Init()` → 每帧 `Encode(VideoFrame)` → `Result<VideoPacket>`（Annex-B）→ `Flush()` → `Release()`。
 - **FFmpeg backend 只接受 I420 / NV12**（`ffmpeg_video.cc: ToAvPixFmt` 对 `kRGBA` 返回 `AV_PIX_FMT_NONE` → `kUnsupportedFormat`）。因此节点内需先做 RGBA→I420 转换。
-- 转换使用 media_record 自带 `@libyuv//:libyuv` 的 `ARGBToI420`（`third_party/libyuv` 已有 vendored BUILD，libyuv 是中性依赖，跨平台可编译）。
+- 转换使用 **media_record 内置软件转换**（`VideoEncoderNode` 内实现的 `ARGBToI420`，纯 C++，~30 行：每行 RGB→YUV BT.601 转换 + 2x2 下采样 UV）；不引入 libyuv。
 
 ### Rationale
 
 - 与 001 冒烟测试（deps_smoke_test 链接三库 umbrella）一致：只经公共 umbrella 消费 video_codec。
 - 拉取模式（`Encode` 返回 packet）比 push 模式（需 `PacketSink` / queue，且 `PacketQueue` 不在 video_codec 公共 umbrella 导出）更简单、少一层依赖。
+- 澄清明确 media_record **不再引入 skia / ffmpeg / libyuv**；RGBA→I420 是确定性的窄转换，内置软件实现可单测、跨平台、无额外依赖。
 
 ### Alternatives considered
 
 - push 模式 + `PacketSink`：`PacketSink` 在 core 公共模块，但 `PacketQueue` 实现不在公共 umbrella（queue 模块可见性受限）。**拒绝**，用 pull 模式。
-- 用 video_codec 的 `Muxer`（api 公共）：`Muxer::SetOutput(ByteSink*)` 依赖 `io::ByteSink`，而 **io / consumer 模块不导出到公共 umbrella**（`public/BUILD.bazel` deps 仅 core/api/utils），外部 workspace 无法消费 FileByteSink。**拒绝**，见 §3。
+- `@libyuv//:libyuv` 的 `ARGBToI420`：libyuv 是中性依赖，但违背「不再引入 libyuv」的澄清。**拒绝**，内置软件转换。
 
 ## 3. 封装路径（MP4 输出）
 
 ### Decision
 
-`MuxerSinkNode` 使用 **media_record 自带 vendored FFmpeg**（`third_party/ffmpeg`，`@ffmpeg//:ffmpeg_codec`）：
+`MuxerSinkNode` 使用 **video_codec 公共面 `Muxer`**（`CodecFactory::CreateMuxer`，`MuxFormat::kMp4`，FFmpeg/libavformat mov muxer backend）：
 
-- 配置已内置 `--enable-muxer=mov`（mov muxer 即写 `.mp4`）、`libavformat`、libx264 编码器（`third_party/ffmpeg/BUILD.bazel`）。
-- 流程：`avformat_alloc_output_context2`（"mp4"）→ 建 video stream（H.264，从首个关键帧解析 SPS/PPS 作 extradata）→ `avio_open` → `avformat_write_header` → 逐包 `av_write_frame`（Annex-B → length-prefixed）→ `av_write_trailer` → close。
-- 输出到 `out/dashcam.mp4`；**写临时文件 + 成功后原子 rename**，失败即删除临时文件（FR-009 不残留残缺产物）。
+- 输出：`Muxer::SetOutput(ByteSink*)` 挂接 `FileByteSink`（写临时文件 `out/.dashcam.mp4.tmp`）→ 逐包 `Push(VideoPacket)` → `Flush()` / `Finish()` 写 trailer → 成功后**原子 rename** 到 `out/dashcam.mp4`；失败删除临时文件（FR-009 不残留残缺产物）。
 - 已存在则覆盖，并打日志提示（澄清：覆盖并继续）。
+- MP4 可选项：`MuxerConfig.fragmented`。默认 `true`（fMP4）便于流式；本期为本地文件、需最大兼容，可设 `fragmented = false`（`av_interleaved_write_frame`，moov 尾写）。**实现时以可播放性为准**，二者均满足 SC-002。
 
 ### Rationale
 
-- video_codec 的 `Muxer` 接口是公共的，但其输出依赖 `io::ByteSink`/`FileByteSink`，这两个模块**不在** `@video_codec//src/framework/public:video_codec` 的公共导出内（其 deps 仅 core/api/utils + backend select）。外部 workspace 无法经公共 umbrella 拿到 FileByteSink 的实现，也无法在 BUILD 中引用 io（可见性受限）。故 video_codec Muxer 无法从公共面直接落盘。
-- media_record 的 `third_party/ffmpeg` 已是为 @ffmpeg http_archive 准备的 vendored BUILD（含 libavformat + mov muxer + libx264），本 workspace 可直接消费 `@ffmpeg//:ffmpeg_codec`，不新增仓库、不触及 video_codec 内部。
+- **前置依赖**：codec `Muxer` 的输出接口是 `io::ByteSink`（`muxer.h` 仅前向声明），`ByteSink` / `FileByteSink` 实现在 `io` 模块，**不在** `@video_codec//src/framework/public:video_codec` 公共导出内（public BUILD deps 仅 core/api/utils），且 io target 可见性受限（`io/BUILD.bazel`），外部 workspace 无法直接消费。故本期**前置任务**：将 `io`（`ByteSink` / `FileByteSink`）纳入 video_codec 公共 umbrella（public BUILD 增加 io deps + 放开 io 可见性 + dist/host/include 拷贝头文件），见 `contracts/dependency-contract.md` D-1。
+- 复用 codec `Muxer` 后，media_record 无需直接链接 FFmpeg，编码器与封装器均来自 video_codec 同一公共面，符合澄清「使用 codec 的 VideoEncoder 及 Muxer 实现编码及 MP4」。
 
 ### Alternatives considered
 
-- 修改 video_codec 公共面（把 io 加进 umbrella）：跨仓库变更、超出本期 feature 范围。**记录为后续依赖改进项**。
-- 输出裸 H.264 流（`.h264`，不封装）：FR-004 要求「通用、可播放的视频格式」，且假设明确 MP4。**拒绝**。
+- media_record 自带 vendored FFmpeg（`@ffmpeg//:ffmpeg_codec`，libavformat mov muxer）封装：违背「不再引入 ffmpeg」的澄清。**拒绝**。
+- 直接消费 video_codec `io` 内部 target：可见性受限（`@video_codec//src/framework:__subpackages__`），外部 workspace 无法引用。**拒绝**。
 - 自研最小 MP4 muxer：重复实现 libavformat。**拒绝**。
 
-## 4. OSD 时间戳渲染（UiOverlayNode）
+## 4. OSD 时间戳渲染与画面组合（UiOverlayNode / MultiViewLayoutNode）
 
 ### Decision
 
-`UiOverlayNode` 以**软件位图字体**（内嵌 5×7 或 8×13 数字/分隔符字形）将时间戳文字直接绘制进 RGBA 帧缓冲，位于默认位置（右下角），颜色白字 + 半透明黑底衬底，保证可辨。
+画面组合与 OSD 统一使用 **native_ui flex 布局 + media_record 软件绘制**：
 
+- `MultiViewLayoutNode`：构建 native_ui widget 树 `Container`（flex）挂 `ExternalImage`（输入图片）+ `Text`（时间戳文本，本期由 OSD 绘制），`Layout(width, height)` 后读子组件 bounds → 将输入图片软件 blit 进 media_record 自有 RGBA 帧缓冲（铺满整帧，作为底层）。
+- `UiOverlayNode`：以 flex 布局给出的时间戳位置，用**软件位图字体**（内嵌 5×7 或 8×13 数字/分隔符字形）将真实时钟时间戳文字绘制进 RGBA 帧缓冲（默认右下角，白字 + 半透明黑底衬底，保证可辨）。
 - 文字内容：真实时钟 `YYYY-MM-DD HH:MM:SS`（`std::chrono::system_clock` + `strftime`），每帧取当前时间 → 随录制逐帧递增。
 - 输入 tag `video` 接画面帧、`signal` 接事件（本期 OSD 只渲染时间戳，事件可忽略/可叠加简单标记）。
 
 ### Rationale
 
-- native_ui host 的 `Surface`（`surface.cc`）只公开 `Dump(path)` 写 PNG，**无公共像素回读**；`Surface::CreateFromBuffer`（CPU 回读路径）是 Android-only，host 上 stub 返回 nullptr。故无法用 native_ui Canvas 绘制后取回 RGBA 像素。
-- 位图字体绘制是自包含、确定性、可单测的软件渲染，host/CI 可运行，不依赖字体文件与 GPU。
+- 澄清明确：布局/时间戳**直接使用 native_ui 的 canvas/flex 布局组合**（底部/底层为 ExternalImage，上方叠加时间戳文本）。
+- native_ui host 的 `Surface`（`surface.cc`）只公开 `Dump(path)` 写 PNG，**无公共像素回读**；`Surface::CreateFromBuffer`（CPU 回读路径）是 Android-only，host 上 stub 返回 nullptr（`surface_test.cc: CreateFromBufferHostStubNull`）。故无法用 native_ui Canvas 绘制后取回 RGBA 像素 → 最终像素绘制在 media_record 自有 RGBA 缓冲中完成。
+- native_ui 公共面提供 `Container`（flex/Yoga）、`ExternalImage`、`Text`、`Image::FromFile`/`CopyPixels`，足以支撑「flex 布局组合 + 软件绘制」；位图字体绘制自包含、确定性、可单测，host/CI 可运行。
 
 ### Alternatives considered
 
+- 扩展 native_ui 公共面增加 host 像素回读（`Surface::CopyPixels` 或 host `CreateFromBuffer`）：第二处跨仓改动，超出本期范围。**记录为后续依赖改进项**。
 - native_ui Canvas → Surface → `Dump` PNG → 再解码：性能不可行（每帧一次 PNG 编解码）。**拒绝**。
-- FFmpeg drawtext 滤镜：需额外字体文件，且我们已走 vendored FFmpeg 的 libavformat 只封装不滤镜。**拒绝**。
+- FFmpeg drawtext 滤镜：需额外字体资源，且 media_record 不再引入 FFmpeg。**拒绝**。
 
 ## 5. 帧传输与运行器（src/framework/stream/）
 
@@ -142,11 +146,12 @@ recorder.json 引用 8 个节点实例、7 类节点类型。本期将 7 类节�
 
 ## 9. 测试与验证（SC-001~005）
 
-- 节点单测：位图字体绘制（时间戳文字出现在预期区域且逐帧变化）、RGBA→I420 转换（尺寸/格式正确）、SignalSource 事件计数。
-- 端到端 `dashcam_record_test.cc`：短帧数（如 60 帧）驱动 `PipelineRunner`，断言输出 MP4 存在、含 `ftyp` / `moov` / `mdat`、帧数匹配、时间戳文字逐帧递增。
+- 节点单测：软件位图字体绘制（时间戳文字出现在预期区域且逐帧变化）、软件 RGBA→I420 转换（尺寸/格式正确）、SignalSource 事件计数。
+- 端到端 `dashcam_record_test.cc`：短帧数（如 60 帧）驱动 `PipelineRunner`，断言输出 MP4 存在、含 `ftyp` / `moov` / `mdat`、帧数匹配、时间戳文字逐帧递增（经 codec `Muxer` + `FileByteSink` 落盘）。
 - `pipeline_config_test.cc`：把 `dashcam_record.json` 加入模板校验清单。
 - `make verify`：`bazel build //...` + `bazel test //src/tests:all` + 运行录制入口并检查产物存在（SC-004）。
 
-## 10. 待确认事项
+## 10. 前置任务与待确认事项
 
-- 无阻塞项。开放项（非阻塞，记录默认值）：bitrate 默认值待实现时按分辨率固定一个合理值（如 2~4 Mbps）；默认图片分辨率与内容以 `dashcam_default.png` 实际文件为准。
+- **前置任务（跨仓）**：video_codec 公共 umbrella 导出 `io`（`ByteSink` / `FileByteSink`）——public BUILD 增加 io deps、`io/BUILD.bazel` 放开对外可见性、`dist/host/include/video_codec/` 拷贝两个头文件，并在 video_codec 侧补一条 umbrella 编译冒烟（`tests/`）。这是本 feature 开始实现前的依赖项。
+- 无阻塞开放项。非阻塞默认值：bitrate 按分辨率固定（如 1280×720 → 2~4 Mbps）；默认图片分辨率与内容以 `dashcam_default.png` 实际文件为准；MP4 `fragmented` 以可播放性为准（默认 `false`，普通文件 MP4）。

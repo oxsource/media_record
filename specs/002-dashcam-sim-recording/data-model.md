@@ -18,11 +18,11 @@
 | 字段 | 类型 | 约束 / 规则 |
 |------|------|-------------|
 | format | string | 默认 `"YYYY-MM-DD HH:MM:SS"`（真实时钟） |
-| position | enum/rect | 默认右下角（画面一角） |
+| position | rect | 默认右下角（画面一角），由 native_ui flex 布局（`Container` + `Text`）计算得出 |
 | font | bitmap glyph table | 内嵌位图字体（5×7 或 8×13 数字 + 分隔符），白字 + 半透明黑底 |
 | source_clock | `std::chrono::system_clock` | 每帧取当前真实时间 |
 
-**状态转移**：无（纯渲染属性）。
+**状态转移**：无（纯渲染属性）。绘制由 media_record 软件位图字体完成（native_ui host Surface 无像素回读）。
 
 ## 3. SignalEvent（信号事件，旁路）
 
@@ -73,8 +73,9 @@
 ## 7. 媒体格式链
 
 ```
-default.png ──decode──▶ RGBA(VideoFrame) ──layout──▶ RGBA ──overlay──▶ RGBA
-      │                                                              │
-      └── 时间戳文字（位图字体）──────────────────────────▶ ARGBToI420（libyuv）
-      ──▶ VideoEncoder(H.264) ──▶ VideoPacket(Annex-B) ──▶ libavformat mov muxer ──▶ out/dashcam.mp4
+default.png ──decode(Image::FromFile/CopyPixels)──▶ RGBA(VideoFrame) ──flex布局──▶ RGBA(铺满整帧)
+      │                                                                    │
+      └── 时间戳文字（软件位图字体，flex 定位，叠加角落）────▶ RGBA
+      ──▶ 软件 ARGBToI420 ──▶ VideoEncoder(H.264) ──▶ VideoPacket(Annex-B)
+      ──▶ codec Muxer（FileByteSink 临时文件）──原子 rename──▶ out/dashcam.mp4
 ```

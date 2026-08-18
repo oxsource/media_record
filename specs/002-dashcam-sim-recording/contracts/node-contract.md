@@ -40,7 +40,7 @@ recorder.json 引用的 7 类节点实现为**可运行的真实实现**（替�
 |----|-----|
 | input | `f:frames`（本期单路，f/r 预留） |
 | output | `output:view_frames` → `Packet<VideoFrame>`（RGBA） |
-| 行为 | 单视图：将输入帧排布为整帧画布（尺寸=配置分辨率）；不实现多路拼接 |
+| 行为 | 构建 native_ui flex 树（`Container` + `ExternalImage`，铺满整帧），`Layout(w,h)` 后读子组件 bounds → 将输入帧软件 blit 进自有 RGBA 帧缓冲（尺寸=配置分辨率）；不实现多路拼接 |
 | 失败 | 输入缺失 → 报错命名节点 |
 
 ### 3.4 UiOverlayNode
@@ -50,7 +50,7 @@ recorder.json 引用的 7 类节点实现为**可运行的真实实现**（替�
 | input | `video:view_frames`、`signal:signals` |
 | output | `output:osd_frames` → `Packet<VideoFrame>`（RGBA） |
 | options | `format`（默认 `%Y-%m-%d %H:%M:%S`）、`position`（默认右下角） |
-| 行为 | 以位图字体在帧上绘制真实时钟时间戳（每帧取 `system_clock`）；事件输入本期不渲染（扩展点） |
+| 行为 | 以 native_ui flex 布局（`Container` + `Text`）计算时间戳位置，用软件位图字体在帧上绘制真实时钟时间戳（每帧取 `system_clock`）；时间戳叠加于画面固定角落（图片铺满整帧为底层）；事件输入本期不渲染（扩展点） |
 | 失败 | 输入缺失 → 报错命名节点 |
 
 ### 3.5 VideoEncoderNode
@@ -59,7 +59,7 @@ recorder.json 引用的 7 类节点实现为**可运行的真实实现**（替�
 |----|-----|
 | input | `input:osd_frames` |
 | output | `output:es_packets` → `Packet<VideoPacket>`（Annex-B） |
-| 行为 | RGBA→I420（libyuv `ARGBToI420`）→ `CodecFactory::CreateVideo`（H.264, 30fps）→ 逐帧 `Encode` → 结束 `Flush` |
+| 行为 | 软件 RGBA→I420（media_record 内置）→ `CodecFactory::CreateVideo`（H.264, I420, 30fps）→ 逐帧 `Encode` → 结束 `Flush` |
 | 失败 | 编码器不可用 / 编码失败 → `kEncodeFailed`，命名节点 |
 
 ### 3.6 RecorderNode
@@ -78,7 +78,7 @@ recorder.json 引用的 7 类节点实现为**可运行的真实实现**（替�
 |----|-----|
 | input | `input:clips` → `Packet<VideoPacket>` |
 | options | `output`（默认 `out/dashcam.mp4`） |
-| 行为 | 用 vendored FFmpeg（libavformat mov muxer）写 MP4：临时文件写入 → trailer → 原子 rename；覆盖旧文件并提示 |
+| 行为 | 用 video_codec 公共面 `Muxer`（`CodecFactory::CreateMuxer`，`MuxFormat::kMp4`）写 MP4：`SetOutput(FileByteSink)` 写临时文件 → 逐包 `Push` → `Finish` 写 trailer → 原子 rename；覆盖旧文件并提示 |
 | 失败 | 输出目录不可写 / muxer 失败 → 报错含路径 + 删除临时文件 + 退出非零（FR-009） |
 
 ## 4. 验收

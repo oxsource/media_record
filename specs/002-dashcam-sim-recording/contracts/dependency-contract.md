@@ -1,4 +1,4 @@
-# Contract: Dependency — 三库消费与 vendored FFmpeg/libyuv
+# Contract: Dependency — 三库公共面消费与 video_codec umbrella 前置扩展
 
 **Branch**: `002-dashcam-sim-recording` | **Date**: 2026-08-18 | **Spec**: [spec.md](../spec.md)
 
@@ -7,28 +7,27 @@
 | 库 | 消费 target | 本期用途 |
 |----|-------------|----------|
 | graph_runtime | `@graph_runtime//src/framework/public:runtime` | 值类型 / schema 语义（不执行图；公共 umbrella 不含 GraphRuntime 执行类） |
-| native_ui | `@native_ui//:native_ui` | `Image::FromFile` / `CopyPixels` 解码默认图片（host Surface 无像素回读，OSD 用软件位图字体） |
-| video_codec | `@video_codec//src/framework/public:video_codec` | `VideoEncoder`（H.264, I420）/ `VideoFrame` / `VideoPacket` / `CodecFactory` |
+| native_ui | `@native_ui//:native_ui` | `Image::FromFile` / `CopyPixels` 解码默认图片为 RGBA + `Container` / `ExternalImage` / `Text` flex 布局组合画面结构与位置（像素由 media_record 软件绘制，host Surface 无像素回读） |
+| video_codec | `@video_codec//src/framework/public:video_codec` | `VideoEncoder`（H.264, I420）/ `Muxer`（MP4）/ `ByteSink` / `FileByteSink` / `VideoFrame` / `VideoPacket` / `CodecFactory` |
 
-## 2. vendored 依赖（media_record 自带构建）
+## 2. vendored 依赖（media_record 不再直接消费）
 
-| 依赖 | target | 用途 |
-|------|--------|------|
-| FFmpeg | `@ffmpeg//:ffmpeg_codec`（`third_party/ffmpeg`） | libavformat mov muxer 写 MP4（MuxerSinkNode） |
-| libyuv | `@libyuv//:libyuv`（`third_party/libyuv`） | `ARGBToI420`（RGBA→I420，编码前转换） |
+media_record pipeline **不直接链接** `@ffmpeg` / `@libyuv`（不引入 skia / ffmpeg / libyuv，按澄清）。`third_party/` 下 ffmpeg / libyuv / skia 等的 BUILD 包装仅用于满足 graph_runtime / native_ui / video_codec 的 `*_setup()` 对 http_archive `build_file` label 的解析（媒体 `ffmpeg`/`libyuv` 源码仍由 video_codec 的 setup 拉取构建，供 video_codec 内部 backend 使用）。RGBA→I420 由 media_record 内置软件转换实现。
 
-## 3. 关键约束（研究 §2/§3 结论）
+## 3. 关键约束（研究 §2/§3/§4 结论）
 
 | # | 约束 |
 |---|------|
-| D-1 | video_codec **公共 umbrella 不导出** io（`ByteSink`/`FileByteSink`）与 queue（`PacketQueue`）模块 → 编码走 `VideoEncoder::Encode` pull 模式；MP4 封装用 media_record 自带 vendored FFmpeg |
-| D-2 | 若后续需经 video_codec 公共面封装，需先扩展其 public BUILD（加入 io），属跨仓改进项，不在本期 |
-| D-3 | native_ui host `Surface` 无公共像素回读（`CreateFromBuffer` Android-only）→ OSD 时间戳用软件位图字体绘制 |
-| D-4 | graph_runtime 公共 umbrella 不含执行类 → 本图由 media_record `PipelineRunner` 同步执行 |
-| D-5 | 路径可覆盖沿用 001：`media_record_deps.bzl` 常量 / `.user.bazelrc` |
+| D-1 | **前置跨仓任务**：video_codec 公共 umbrella 本期导出 `io`（`ByteSink` / `FileByteSink`）。改动：`src/framework/public/BUILD.bazel` 的 `video_codec` / `video_codec_hdrs` target 增加 `@video_codec//src/framework/io` deps；`io/BUILD.bazel` 放开对 `@video_codec//src/framework/public` 的可见性；`dist/host/include/video_codec/`（及 android-arm64）拷贝 `byte_sink.h` / `file_byte_sink.h`；video_codec 侧补一条 umbrella 头文件编译冒烟 |
+| D-2 | 编码走 `VideoEncoder::Encode` pull 模式（`VideoPacket` 拉取）；push 模式依赖的 `PacketQueue` 不在公共 umbrella 导出，不采用 |
+| D-3 | `VideoEncoder` FFmpeg backend 仅接受 I420 / NV12（`kRGBA` → `kUnsupportedFormat`）→ RGBA→I420 由 media_record 内置软件转换完成 |
+| D-4 | `Muxer::SetOutput(ByteSink*)` 为公共接口；`Muxer` 输出经 `FileByteSink` 写临时文件，成功后原子 rename 落盘（FR-009） |
+| D-5 | native_ui host `Surface` 无公共像素回读（`CreateFromBuffer` Android-only stub）→ 画面像素由 media_record 软件绘制（flex 布局定位 + 位图字体） |
+| D-6 | graph_runtime 公共 umbrella 不含执行类 → 本图由 media_record `PipelineRunner` 同步执行 |
+| D-7 | 路径可覆盖沿用 001：`media_record_deps.bzl` 常量 / `.user.bazelrc` |
 
 ## 4. 验收
 
-- 7 类节点 + 录制入口在 host 全量构建通过（`bazel build //...`）。
-- 录制产物可播放（H.264 + MP4）。
+- video_codec 公共 umbrella 扩展后，media_record 仅经 `@video_codec//src/framework/public:video_codec` 一个 target 获得编码 + 封装 + ByteSink 能力，7 类节点 + 录制入口在 host 全量构建通过（`bazel build //...`）。
+- 录制产物可播放（H.264 + MP4，`ftyp`/`moov`/`mdat` 存在）。
 - Android 交叉编译保持兼容（host 对 Android-only 能力 stub，不因本 feature 引入平台硬依赖）。

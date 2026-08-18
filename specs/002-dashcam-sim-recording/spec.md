@@ -17,6 +17,9 @@
 - Q: Recorder 节点的实现深度？ → A: 单会话单分段——实现录制会话生命周期，不做缓存池 / 多分段切换 / 防抖
 - Q: 输出文件已存在时的行为？ → A: 覆盖并继续，日志中提示已覆盖
 - Q: 配置功能（录制参数选项）的时机？ → A: 本提案主旨为通过本示例初步实现核心 node；录制参数等可配置功能（时长 / 输入图片 / 输出位置 / 时间戳格式与位置）留待后续提案实现，本期使用默认值运行
+- Q: 布局与 OSD 时间戳的实现方式？ → A: 直接使用 native_ui 的 canvas/flex 布局（Container + ExternalImage + Text）组合画面结构；因 host Surface 无像素回读，图像 blit 与时间戳文字以软件方式绘制进 media_record 自有 RGBA 帧缓冲
+- Q: 时间戳在画面中的叠放语义？ → A: 输入图片铺满整个视频帧作为底层画面，时间戳文字叠加于画面固定角落
+- Q: 编码与 MP4 封装的实现与依赖？ → A: 复用 video_codec 公共面 `VideoEncoder`（H.264）+ `Muxer`（MP4）；为此扩展 video_codec 公共 umbrella 导出 `ByteSink` / `FileByteSink`；media_record 不再引入 skia / ffmpeg / libyuv，RGBA→I420 以内置软件转换实现
 
 ## User Scenarios & Testing *(mandatory)*
 
@@ -73,15 +76,15 @@
 ### Functional Requirements
 
 - **FR-001**: 系统 MUST 接受一张静态图片作为模拟摄像头输入。
-- **FR-002**: 系统 MUST 将输入图片按既定布局排布为录制画面的视频帧序列。
-- **FR-003**: 系统 MUST 在画面固定位置绘制录制时间戳，时间戳 MUST 显示录制时刻的真实日期与时间（真实时钟），并随时间自然递增，模拟行车记录仪画面。
+- **FR-002**: 系统 MUST 使用 native_ui 的 flex 布局（Container + ExternalImage + Text）将输入图片与时间戳组件组合为录制画面，并以软件方式绘制进自有 RGBA 帧缓冲。
+- **FR-003**: 系统 MUST 以输入图片铺满整帧作为底层画面，并在画面固定角落叠加录制时间戳文字；时间戳 MUST 显示录制时刻的真实日期与时间（真实时钟），随时间自然递增，模拟行车记录仪画面。
 - **FR-004**: 系统 MUST 将生成的视频帧序列编码为通用、可播放的视频格式并写入输出文件。
 - **FR-005**: 系统 MUST 默认录制 10 秒后自动结束录制并正常退出（时长可配置能力留待后续提案）。
 - **FR-006**: 系统 MUST 使用内置默认输入图片与默认输出位置完成录制（输入/输出可配置能力留待后续提案）。
 - **FR-007**: 系统 MUST 使用默认的时间戳显示格式与位置绘制时间戳（格式/位置可配置能力留待后续提案）。
 - **FR-008**: 输入缺失 / 格式不支持 / 输出不可写 / 编码失败时，系统 MUST 给出可定位到具体原因的清晰错误并退出非零。
 - **FR-009**: 系统 MUST 在结束时不残留损坏的半成品文件。
-- **FR-010**: 本期 MUST 将记录仪 pipeline 引用的 7 类节点（画面输入 / 信号源 / 多画面布局 / OSD 叠加 / 视频编码 / 录制 / 封装输出）实现为可运行的真实实现；其余未引用的节点类型（音频编码 / 推流 / 预览）本期仅保留骨架，不做功能实现。
+- **FR-010**: 本期 MUST 将记录仪 pipeline 引用的 7 类节点（画面输入 / 信号源 / 多画面布局 / OSD 叠加 / 视频编码 / 录制 / 封装输出）实现为可运行的真实实现；其中视频编码复用 video_codec 公共面 `VideoEncoder`（H.264，FFmpeg backend），MP4 封装复用 video_codec 公共面 `Muxer`（ByteSink 输出）；其余未引用的节点类型（音频编码 / 推流 / 预览）本期仅保留骨架，不做功能实现。
 
 ### Key Entities *(include if feature involves data)*
 
@@ -106,6 +109,8 @@
 - 输出视频采用通用容器与编码（如 MP4 + H.264），可被主流播放器直接播放。
 - 默认帧率取 30fps；默认分辨率跟随输入图片。
 - 时间戳默认格式为"日期 时:分:秒"，内容为录制时刻的真实日期时间（真实时钟），默认位置为画面一角（如右下角）。
+- 布局与 OSD：使用 native_ui 公共面 flex 布局（Container + ExternalImage + Text）组合画面结构与位置；因 host Surface 无像素回读，最终图像与时间戳文字由 media_record 以软件方式绘制进自有 RGBA 帧缓冲，再送入编码器。
+- 编码与封装：H.264 编码与 MP4 封装均复用 video_codec 公共面（`VideoEncoder` + `Muxer`）；为此 video_codec 公共 umbrella 需导出 io 能力（`ByteSink` / `FileByteSink`）。media_record 本身不再引入 skia / ffmpeg / libyuv；RGBA→I420 转换以 media_record 内置软件实现完成。
 - 默认输出位置为工程约定的产物目录（如 `out/`）下的固定文件名。
 - 录制参数的可配置能力（时长 / 输入图片 / 输出位置 / 时间戳格式与位置）不在本提案范围，由后续提案实现；本期均使用默认值。
 - 本 feature 不实现真实摄像头采集、不实现多路拼接业务逻辑；仅以单张图片模拟单路输入，为后续真实录制提供可运行基线。
