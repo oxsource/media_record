@@ -1,0 +1,9 @@
+package(default_visibility = ["//visibility:public"])
+
+# Default simulated-camera input image (spec 002). Consumed as runfiles by the
+# dashcam_record example and its e2e test via $(location) (see T002).
+filegroup(
+    name = "assets",
+    srcs = glob(["*.png"]),
+    visibility = ["//visibility:public"],
+)

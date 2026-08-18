@@ -1,0 +1,21 @@
+package(default_visibility = ["//visibility:public"])
+
+# Frame-transport layer for the dashcam recording pipeline (spec 002).
+#
+# Headers-only scaffold created in Phase 1 (task T001); the Packet /
+# StreamBuffer / PipelineRunner implementations land in Phase 2 (tasks
+# T005-T007). The video_codec public umbrella dep is wired here because the
+# transport types carry video::codec::VideoFrame / VideoPacket (see
+# research.md §2 / dependency-contract.md D-2).
+cc_library(
+    name = "stream",
+    hdrs = [
+        "packet.h",
+        "stream_buffer.h",
+        "pipeline_runner.h",
+    ],
+    deps = [
+        "@video_codec//src/framework/public:video_codec",
+    ],
+    visibility = ["//visibility:public"],
+)

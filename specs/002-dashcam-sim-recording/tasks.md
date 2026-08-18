@@ -30,9 +30,9 @@ description: "Task list for feature 002-dashcam-sim-recording implementation"
 
 **Purpose**: Scaffold the new feature's shared pieces so story work can start.
 
-- [ ] T001 Create frame-transport module scaffold: `src/framework/stream/BUILD.bazel` declaring `cc_library(name = "stream")` (headers-only for now: `packet.h` / `stream_buffer.h` / `pipeline_runner.h`), wire `@video_codec` core/types deps
-- [ ] T002 [P] Add default input image `src/examples/assets/dashcam_default.png` (1280×720 RGBA-friendly PNG) + `src/examples/assets/BUILD.bazel` exposing it as a `filegroup`/`exports_files` so the example can locate it via `$(location)`
-- [ ] T003 [P] Add default runnable config `src/examples/configs/dashcam_record.json` (single-cam topology: StreamInput + SignalSource → MultiViewLayout → UiOverlay → VideoEncoder → Recorder → MuxerSink; 6 streams: `frames`, `signals`, `view_frames`, `osd_frames`, `es_packets`, `clips`) and register it in `src/examples/configs/BUILD.bazel`
+- [x] T001 Create frame-transport module scaffold: `src/framework/stream/BUILD.bazel` declaring `cc_library(name = "stream")` (headers-only for now: `packet.h` / `stream_buffer.h` / `pipeline_runner.h`), wire `@video_codec` core/types deps
+- [x] T002 [P] Add default input image `src/examples/assets/dashcam_default.png` (1280×720 RGBA-friendly PNG) + `src/examples/assets/BUILD.bazel` exposing it as a `filegroup`/`exports_files` so the example can locate it via `$(location)`
+- [x] T003 [P] Add default runnable config `src/examples/configs/dashcam_record.json` (single-cam topology: StreamInput + SignalSource → MultiViewLayout → UiOverlay → VideoEncoder → Recorder → MuxerSink; 6 streams: `frames`, `signals`, `view_frames`, `osd_frames`, `es_packets`, `clips`) and register it in `src/examples/configs/BUILD.bazel`
 
 ---
 
