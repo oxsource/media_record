@@ -7,7 +7,7 @@
 // and checks:
 //   - they parse as graph_runtime JSON schema (graph_runtime's JsonParser)
 //   - the graph is structurally valid (unique names, connectivity, no cycles)
-//   - every referenced node type is one of the 10 planned node types
+//   - every referenced node type is one of the 9 planned node types
 // Negative cases verify the locatable error messages required by FR-009.
 
 #include <set>
@@ -20,11 +20,10 @@
 namespace media::record::config {
 namespace {
 
-// The 10 planned node types (spec 001 research.md §6 / FR-003). Business nodes
+// The 9 planned node types (spec 001 research.md §6 / FR-003). Business nodes
 // land in later features; templates must reference exactly these type names.
 constexpr const char* kPlannedNodeTypes[] = {
     "StreamInputNode",
-    "SignalSourceNode",
     "MultiViewLayoutNode",
     "UiOverlayNode",
     "VideoEncoderNode",
@@ -74,12 +73,11 @@ TEST(PipelineConfigTest, DashcamRecordTopology) {
   ASSERT_TRUE(parsed.ok()) << parsed.status();
   const graph::runtime::GraphConfig& config = *parsed;
 
-  // 7 nodes: 1×StreamInput + 1×SignalSource + Layout + Overlay + Encoder +
-  // Recorder + Muxer.
-  ASSERT_EQ(config.nodes.size(), 7u);
+  // 6 nodes: StreamInput + Layout + Overlay + Encoder + Recorder + Muxer.
+  ASSERT_EQ(config.nodes.size(), 6u);
   EXPECT_EQ(config.nodes[0].type, "StreamInputNode");
-  EXPECT_EQ(config.nodes[1].type, "SignalSourceNode");
-  EXPECT_EQ(config.nodes[6].type, "MuxerSinkNode");
+  EXPECT_EQ(config.nodes[1].type, "MultiViewLayoutNode");
+  EXPECT_EQ(config.nodes[5].type, "MuxerSinkNode");
 
   // Node params are carried by each node's JSON "options" object and parsed
   // into NodeDef.options by graph_runtime's JsonParser.
@@ -92,21 +90,43 @@ TEST(PipelineConfigTest, DashcamRecordTopology) {
   const int* frame_count = config.nodes[0].options.Get<int>("frame_count");
   ASSERT_NE(frame_count, nullptr);
   EXPECT_EQ(*frame_count, 300);
-  const std::string* format = config.nodes[3].options.Get<std::string>("format");
+  const std::string* format = config.nodes[2].options.Get<std::string>("format");
   ASSERT_NE(format, nullptr);
   EXPECT_EQ(*format, "%Y-%m-%d %H:%M:%S");
-  const int* bitrate = config.nodes[4].options.Get<int>("bitrate");
+  const int* bitrate = config.nodes[3].options.Get<int>("bitrate");
   ASSERT_NE(bitrate, nullptr);
   EXPECT_EQ(*bitrate, 4000000);
-  const std::string* output = config.nodes[6].options.Get<std::string>("output");
+  const std::string* output = config.nodes[5].options.Get<std::string>("output");
   ASSERT_NE(output, nullptr);
   EXPECT_EQ(*output, "out/dashcam.mp4");
-  const int* muxer_width = config.nodes[6].options.Get<int>("width");
+  const int* muxer_width = config.nodes[5].options.Get<int>("width");
   ASSERT_NE(muxer_width, nullptr);
   EXPECT_EQ(*muxer_width, 1280);
 
-  // 6 implicit streams (frames / signals / view_frames / osd_frames /
-  // es_packets / clips) referenced via "port:stream".
+  // 5 implicit streams (frames / view_frames / osd_frames / es_packets /
+  // clips) referenced via "port:stream".
+  std::set<std::string> streams;
+  for (const auto& def : config.nodes) {
+    for (const std::string& is : def.input_streams) {
+      const size_t colon = is.find(':');
+      streams.insert(colon == std::string::npos ? is : is.substr(colon + 1));
+    }
+    for (const std::string& os : def.output_streams) {
+      const size_t colon = os.find(':');
+      streams.insert(colon == std::string::npos ? os : os.substr(colon + 1));
+    }
+  }
+  EXPECT_EQ(streams.size(), 5u);
+}
+
+TEST(PipelineConfigTest, RecorderTemplateSixStreams) {
+  graph::runtime::JsonParser parser;
+  auto parsed = parser.Parse("src/examples/configs/recorder.json");
+  ASSERT_TRUE(parsed.ok()) << parsed.status();
+  const graph::runtime::GraphConfig& config = *parsed;
+
+  // Dual-cam reference template: 7 nodes / 6 streams.
+  ASSERT_EQ(config.nodes.size(), 7u);
   std::set<std::string> streams;
   for (const auto& def : config.nodes) {
     for (const std::string& is : def.input_streams) {
@@ -119,28 +139,6 @@ TEST(PipelineConfigTest, DashcamRecordTopology) {
     }
   }
   EXPECT_EQ(streams.size(), 6u);
-}
-
-TEST(PipelineConfigTest, RecorderTemplateSevenStreams) {
-  graph::runtime::JsonParser parser;
-  auto parsed = parser.Parse("src/examples/configs/recorder.json");
-  ASSERT_TRUE(parsed.ok()) << parsed.status();
-  const graph::runtime::GraphConfig& config = *parsed;
-
-  // Dual-cam reference template: 8 nodes / 7 streams (assertion unchanged).
-  ASSERT_EQ(config.nodes.size(), 8u);
-  std::set<std::string> streams;
-  for (const auto& def : config.nodes) {
-    for (const std::string& is : def.input_streams) {
-      const size_t colon = is.find(':');
-      streams.insert(colon == std::string::npos ? is : is.substr(colon + 1));
-    }
-    for (const std::string& os : def.output_streams) {
-      const size_t colon = os.find(':');
-      streams.insert(colon == std::string::npos ? os : os.substr(colon + 1));
-    }
-  }
-  EXPECT_EQ(streams.size(), 7u);
 }
 
 TEST(PipelineConfigTest, MissingFileError) {

@@ -13,14 +13,6 @@
       "output_streams": ["output:frames"]
     },
     {
-      "name": "signals",
-      "type": "SignalSourceNode",
-      "options": {
-        "frame_count": 300
-      },
-      "output_streams": ["output:signals"]
-    },
-    {
       "name": "layout",
       "type": "MultiViewLayoutNode",
       "input_streams": ["f:frames"],
@@ -32,7 +24,7 @@
       "options": {
         "format": "%Y-%m-%d %H:%M:%S"
       },
-      "input_streams": ["video:view_frames", "signal:signals"],
+      "input_streams": ["video:view_frames"],
       "output_streams": ["output:osd_frames"]
     },
     {

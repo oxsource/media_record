@@ -1,24 +1,64 @@
-// PipelineRunner unit tests (spec 002, Phase 2 foundation).
+// GraphRuntime-driven async execution unit tests (spec 002, Phase 2
+// foundation).
 //
-// Exercises the synchronous frame loop over graph_runtime nodes: a source that
-// emits N packets per frame then returns StatusStop(), a sink that drains them,
+// Exercises graph_runtime's own async runtime over registered nodes: a source
+// that emits N packets then returns StatusStop(), a sink that drains them,
 // error propagation (a failing node aborts the run with its name), and a cycle
-// case that must be rejected. Real pipeline nodes land in Phase 3 (US1).
+// case that must be rejected. The graph is driven inline (Initialize → Start →
+// WaitUntilDone → Shutdown) with no dedicated runner module; frame pacing and
+// the frame budget live in the source node (spec 002 execution model
+// 2026-08-19). Real pipeline nodes land in Phase 3 (US1).
 
 #include <string>
 
 #include "gtest/gtest.h"
 #include "src/framework/node/graph_context.h"
+#include "src/framework/node/node.h"
 #include "src/framework/node/node_contract.h"
 #include "src/framework/node/node_options.h"
 #include "src/framework/node/node_registry.h"
-#include "src/framework/runner/pipeline_runner.h"
+#include "src/framework/public/graph_runtime.h"
 #include "src/framework/stream/packet.h"
 
 namespace media::record {
 namespace {
 
-int g_sink_frames = 0;  // observed by tests (nodes are created by the runner)
+int g_sink_frames = 0;  // observed by tests (nodes are created by the runtime)
+
+// Runs the graph with graph_runtime's own async runtime (the same inline
+// lifecycle the dashcam_record entry uses): Initialize → (error callback) →
+// Start → WaitUntilDone → Shutdown. Returns ok=false with a locatable message
+// on any init/run failure.
+struct RunnerError {
+  bool ok = true;
+  std::string message;
+};
+
+RunnerError RunRuntime(graph::runtime::GraphConfig config) {
+  graph::runtime::GraphRuntime runtime;
+  absl::Status status = runtime.Initialize(config);
+  if (!status.ok()) return RunnerError{false, status.ToString()};
+
+  std::string execution_error;
+  runtime.SetErrorCallback([&](const absl::Status& s) {
+    if (execution_error.empty()) execution_error = s.ToString();
+  });
+
+  status = runtime.Start();
+  if (!status.ok()) return RunnerError{false, status.ToString()};
+  status = runtime.WaitUntilDone();
+  if (!status.ok() || runtime.HasError()) {
+    return RunnerError{false, !execution_error.empty()
+                                  ? execution_error
+                                  : (status.ok()
+                                         ? absl::InternalError(
+                                               "graph execution failed")
+                                         : status)
+                                        .ToString()};
+  }
+  runtime.Shutdown();
+  return RunnerError{true, ""};
+}
 
 // --- Stub graph_runtime nodes ---------------------------------------------
 
@@ -116,40 +156,41 @@ graph::runtime::GraphConfig MakeLineConfig() {
   return config;
 }
 
-TEST(PipelineRunnerTest, RunsLineTopologyToCompletion) {
+TEST(GraphRuntimeDriverTest, RunsLineTopologyToCompletion) {
   g_sink_frames = 0;
-  PipelineRunner runner(MakeLineConfig(), /*frame_count=*/20);
-  RunnerError status = runner.Run();
+  // The source's own emit_count bounds the run (the frame budget lives in the
+  // source node), so the config carries it and no runner-side budget exists.
+  RunnerError status = RunRuntime(MakeLineConfig());
   ASSERT_TRUE(status.ok) << status.message;
   EXPECT_EQ(g_sink_frames, 5);  // source stopped at 5; drained
 }
 
-TEST(PipelineRunnerTest, FrameBudgetBoundsSource) {
+TEST(GraphRuntimeDriverTest, FrameBudgetBoundsSource) {
   graph::runtime::GraphConfig config = MakeLineConfig();
-  // Source is configured for 5 packets, but the frame budget is 2: the runner
-  // must not call the source beyond the budget.
+  // The frame budget lives in the source node (StreamInputNode "frame_count"
+  // / stub "emit_count"): bound the source directly. It stops after 2 packets
+  // and the graph completes once the source stops.
+  config.nodes[0].options.Set("emit_count", 2);
   g_sink_frames = 0;
-  PipelineRunner runner(std::move(config), /*frame_count=*/2);
-  RunnerError status = runner.Run();
+  RunnerError status = RunRuntime(std::move(config));
   ASSERT_TRUE(status.ok) << status.message;
   EXPECT_EQ(g_sink_frames, 2);
 }
 
-TEST(PipelineRunnerTest, UnregisteredTypeIsLocatable) {
+TEST(GraphRuntimeDriverTest, UnregisteredTypeIsLocatable) {
   graph::runtime::GraphConfig config;
   graph::runtime::GraphConfig::NodeDef def;
   def.name = "ghost";
   def.type = "NoSuchNode";
   config.nodes.push_back(def);
 
-  PipelineRunner runner(std::move(config), /*frame_count=*/1);
-  RunnerError status = runner.Run();
+  RunnerError status = RunRuntime(std::move(config));
   ASSERT_FALSE(status.ok);
   EXPECT_NE(status.message.find("ghost"), std::string::npos);
   EXPECT_NE(status.message.find("NoSuchNode"), std::string::npos);
 }
 
-TEST(PipelineRunnerTest, FirstNodeErrorAbortsAndNamesNode) {
+TEST(GraphRuntimeDriverTest, FirstNodeErrorAbortsAndNamesNode) {
   graph::runtime::GraphConfig config;
   graph::runtime::GraphConfig::NodeDef src;
   src.name = "src";
@@ -163,14 +204,13 @@ TEST(PipelineRunnerTest, FirstNodeErrorAbortsAndNamesNode) {
   config.nodes.push_back(src);
   config.nodes.push_back(fail);
 
-  PipelineRunner runner(std::move(config), /*frame_count=*/5);
-  RunnerError status = runner.Run();
+  RunnerError status = RunRuntime(std::move(config));
   ASSERT_FALSE(status.ok);
   EXPECT_NE(status.message.find("fail"), std::string::npos);
   EXPECT_NE(status.message.find("boom"), std::string::npos);
 }
 
-TEST(PipelineRunnerTest, CycleIsRejected) {
+TEST(GraphRuntimeDriverTest, CycleIsRejected) {
   graph::runtime::GraphConfig config;
   graph::runtime::GraphConfig::NodeDef a;
   a.name = "a";
@@ -185,8 +225,7 @@ TEST(PipelineRunnerTest, CycleIsRejected) {
   config.nodes.push_back(a);
   config.nodes.push_back(b);
 
-  PipelineRunner runner(std::move(config), /*frame_count=*/1);
-  RunnerError status = runner.Run();
+  RunnerError status = RunRuntime(std::move(config));
   ASSERT_FALSE(status.ok);
   EXPECT_NE(status.message.find("cycle"), std::string::npos);
 }

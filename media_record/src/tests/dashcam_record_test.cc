@@ -1,6 +1,6 @@
 // End-to-end recording test (spec 002, T021) + failure-path tests (T027).
 //
-// Drives the full 7-node recorder pipeline (graph_runtime nodes) with the real
+// Drives the full 6-node recorder pipeline (graph_runtime nodes) with the real
 // dashcam_record.json topology (graph_runtime JSON schema; node params come from
 // each node's JSON "options" object, parsed into NodeDef.options) but a short
 // 60-frame budget and a temp output file, then asserts a playable MP4 was
@@ -19,11 +19,51 @@
 #include <zlib.h>
 
 #include "gtest/gtest.h"
+#include "src/framework/config/config_validator.h"
 #include "src/framework/config/json/json_parser.h"
-#include "src/framework/runner/pipeline_runner.h"
+#include "src/framework/public/graph_runtime.h"
 
 namespace media::record {
 namespace {
+
+// Runs the graph with graph_runtime's own async runtime (the same inline
+// lifecycle the dashcam_record entry uses): Initialize → (side packet +
+// error callback) → Start → WaitUntilDone → Shutdown. Returns ok=false with a
+// locatable message on any init/run failure.
+struct RunnerError {
+  bool ok = true;
+  std::string message;
+};
+
+RunnerError RunRuntime(graph::runtime::GraphConfig config) {
+  graph::runtime::GraphRuntime runtime;
+  absl::Status status = runtime.Initialize(config);
+  if (!status.ok()) return RunnerError{false, status.ToString()};
+
+  bool pipeline_failed = false;
+  absl::Status sp_status = runtime.SetInputSidePacket("pipeline_failed", graph::runtime::Packet::MakePacket<bool*>(&pipeline_failed));
+  if (!sp_status.ok()) return RunnerError{false, sp_status.ToString()};
+  std::string execution_error;
+  runtime.SetErrorCallback([&](const absl::Status& s) {
+    pipeline_failed = true;
+    if (execution_error.empty()) execution_error = s.ToString();
+  });
+
+  status = runtime.Start();
+  if (!status.ok()) return RunnerError{false, status.ToString()};
+  status = runtime.WaitUntilDone();
+  if (!status.ok() || runtime.HasError()) {
+    return RunnerError{false, !execution_error.empty()
+                                  ? execution_error
+                                  : (status.ok()
+                                         ? absl::InternalError(
+                                               "graph execution failed")
+                                         : status)
+                                        .ToString()};
+  }
+  runtime.Shutdown();
+  return RunnerError{true, ""};
+}
 
 std::string Runfile(const char* rel) {
   if (const char* src = std::getenv("TEST_SRCDIR")) {
@@ -150,7 +190,6 @@ void ApplyScenario(graph::runtime::GraphConfig* config,
                    int frames) {
   PatchNodeOption(config, "StreamInputNode", "image", image);
   PatchNodeOption(config, "StreamInputNode", "frame_count", frames);
-  PatchNodeOption(config, "SignalSourceNode", "frame_count", frames);
   PatchNodeOption(config, "MuxerSinkNode", "output", output);
 }
 
@@ -162,8 +201,7 @@ TEST(DashcamRecordTest, RecordsPlayableMp4) {
   graph::runtime::GraphConfig config = LoadConfig();
   ApplyScenario(&config, Runfile("src/examples/assets/dashcam_default.png"),
                 output, /*frames=*/60);
-  PipelineRunner runner(std::move(config), 60);
-  RunnerError run = runner.Run();
+  RunnerError run = RunRuntime(std::move(config));
   ASSERT_TRUE(run.ok) << run.message;
 
   EXPECT_TRUE(HasBytes(output, "ftyp", 4));
@@ -187,8 +225,7 @@ TEST(DashcamRecordTest, MissingInputImageFailsWithPath) {
 
   graph::runtime::GraphConfig config = LoadConfig();
   ApplyScenario(&config, missing, output, /*frames=*/60);
-  PipelineRunner runner(std::move(config), 60);
-  RunnerError run = runner.Run();
+  RunnerError run = RunRuntime(std::move(config));
   ASSERT_FALSE(run.ok);
   EXPECT_NE(run.message.find(missing), std::string::npos)
       << "error must contain the input path: " << run.message;
@@ -203,8 +240,7 @@ TEST(DashcamRecordTest, UnwritableOutputFailsWithPath) {
   graph::runtime::GraphConfig config = LoadConfig();
   ApplyScenario(&config, Runfile("src/examples/assets/dashcam_default.png"),
                 output, /*frames=*/60);
-  PipelineRunner runner(std::move(config), 60);
-  RunnerError run = runner.Run();
+  RunnerError run = RunRuntime(std::move(config));
   ASSERT_FALSE(run.ok);
   EXPECT_NE(run.message.find("muxer_sink"), std::string::npos);
   EXPECT_NE(run.message.find(output), std::string::npos)
@@ -229,8 +265,7 @@ TEST(DashcamRecordTest, EncodeFailureLeavesNoPartialArtifact) {
   PatchNodeOption(&config, "StreamInputNode", "height", 5);
   PatchNodeOption(&config, "MuxerSinkNode", "width", 5);
   PatchNodeOption(&config, "MuxerSinkNode", "height", 5);
-  PipelineRunner runner(std::move(config), 60);
-  RunnerError run = runner.Run();
+  RunnerError run = RunRuntime(std::move(config));
   ASSERT_FALSE(run.ok);
   EXPECT_NE(run.message.find("video_encoder"), std::string::npos)
       << run.message;

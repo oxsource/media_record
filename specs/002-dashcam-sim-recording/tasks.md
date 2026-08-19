@@ -34,7 +34,7 @@ description: "Task list for feature 002-dashcam-sim-recording implementation"
 
 - [x] T001 Create sync-runner module scaffold: `src/framework/runner/BUILD.bazel` declaring `cc_library(name = "runner")` (headers: `pipeline_runner.h`), dep on `@graph_runtime//src/framework/public:runtime` (nodes/config/types via the single public umbrella, same as graph_runtime's own `src/examples/*` deps). **Removed**: `src/framework/transport/` and `src/framework/config/` (media_record 自有帧传输与配置不再存在；数据通路用 graph_runtime 的 `Node`/`GraphContext`/`Packet`，配置用其 `GraphConfig`)
 - [x] T002 [P] Add default input image `src/examples/assets/dashcam_default.png` (1280×720 RGBA-friendly PNG) + `src/examples/assets/BUILD.bazel` exposing it as a `filegroup`/`exports_files` so the example can locate it via `$(location)`
-- [x] T003 [P] Add default runnable config `src/examples/configs/dashcam_record.json` (**graph_runtime JSON schema**: 7 nodes with `input_streams`/`output_streams` in `"port:stream"` form; no `streams[]` section, no per-node `options`; 6 implicit streams: `frames`, `signals`, `view_frames`, `osd_frames`, `es_packets`, `clips`) and register it in `src/examples/configs/BUILD.bazel`; convert `recorder.json` / `stream.json` / `preview.json` to the same schema
+- [x] T003 [P] Add default runnable config `src/examples/configs/dashcam_record.json` (**graph_runtime JSON schema**: 6 nodes with `input_streams`/`output_streams` in `"port:stream"` form; no `streams[]` section, no per-node `options`; 5 implicit streams: `frames`, `view_frames`, `osd_frames`, `es_packets`, `clips`) and register it in `src/examples/configs/BUILD.bazel`; convert `recorder.json` / `stream.json` / `preview.json` to the same schema
 
 ---
 
@@ -61,22 +61,21 @@ description: "Task list for feature 002-dashcam-sim-recording implementation"
 
 - [x] T008 [P] [US1] Unit test for software RGBA→I420 conversion in `src/tests/rgba_i420_test.cc` (known RGBA pattern → expected Y/U/V planes, BT.601, correct dimensions)
 - [x] T009 [P] [US1] Unit test for bitmap-font timestamp renderer in `src/tests/bitmap_font_test.cc` (glyphs blit at expected region for `YYYY-MM-DD HH:MM:SS`, two different times produce different pixels)
-- [x] T010 [P] [US1] Unit tests for source nodes in `src/tests/source_nodes_test.cc`: `StreamInputNode` (graph_runtime node) decodes `dashcam_default.png` and emits one RGBA `VideoFrame` per Process with real-clock pts; `SignalSourceNode` emits periodic `kTick` events
+- [x] T010 [P] [US1] Unit tests for source nodes in `src/tests/source_nodes_test.cc`: `StreamInputNode` (graph_runtime node) decodes `dashcam_default.png` and emits one RGBA `VideoFrame` per Process with real-clock pts
 
 ### Implementation for User Story 1
 
 - [x] T011 [P] [US1] Implement software RGBA→I420 converter `src/nodes/video_encoder/rgba_i420.{h,cc}` (per-row RGB→YUV BT.601 + 2×2 chroma downsample; `VideoFrame` in `kRGBA`, out `kI420`) + register in `src/nodes/video_encoder/BUILD.bazel`
 - [x] T012 [P] [US1] Implement bitmap-font glyph table + renderer `src/nodes/ui_overlay/bitmap_font.{h,cc}` (embedded 5×7/8×13 digits + separators; draws white-on-semi-transparent-black into an RGBA buffer at a given rect) + register in `src/nodes/ui_overlay/BUILD.bazel`
 - [x] T013 [P] [US1] Implement `StreamInputNode` in `src/nodes/stream_input/stream_input_node.{h,cc}` as `graph::runtime::Node` (source, no input ports; output `output:frames`): `Open` decodes the default image via native_ui `Image::FromFile` + `CopyPixels` into RGBA; each `Process` emits `Packet::MakePacket<video::codec::VideoFrame>(...)` with real-clock timestamp + `At(Timestamp)`; returns `StatusStop()` after `frame_count` (from `NodeOptions`) + register via `GRAPH_RUNTIME_REGISTER_NODE` in `src/nodes/stream_input/BUILD.bazel`
-- [x] T014 [P] [US1] Implement `SignalSourceNode` in `src/nodes/signal_source/signal_source_node.{h,cc}` as `graph::runtime::Node` (source; output `output:signals`): emits `Packet<SignalEvent>` (`kTick` + real-clock `timestamp_us`) each Process, `StatusStop()` at `frame_count` + register in `src/nodes/signal_source/BUILD.bazel`
 - [x] T015 [P] [US1] Implement `MultiViewLayoutNode` in `src/nodes/multi_view_layout/multi_view_layout_node.{h,cc}` as `graph::runtime::Node` (input `f:frames`, output `output:view_frames`): build native_ui flex tree (`Container` + `ExternalImage`, fill frame), `Layout(w,h)`, software-blit the input frame pixels into the node's own RGBA `VideoFrame` buffer (frame fills whole frame; single-view only, multi-input reserved) + register in `src/nodes/multi_view_layout/BUILD.bazel` with `@native_ui` dep
-- [x] T016 [US1] Implement `UiOverlayNode` in `src/nodes/ui_overlay/ui_overlay_node.{h,cc}` as `graph::runtime::Node` (inputs `video:view_frames` + `signal:signals`, output `output:osd_frames`): compute timestamp position via native_ui flex (`Container` + `Text`, default bottom-right), render real-clock `%Y-%m-%d %H:%M:%S` text with `bitmap_font` into the incoming RGBA frame's top layer; drain (ignore) signal events + register in `src/nodes/ui_overlay/BUILD.bazel` (depends on T012)
+- [x] T016 [US1] Implement `UiOverlayNode` in `src/nodes/ui_overlay/ui_overlay_node.{h,cc}` as `graph::runtime::Node` (input `video:view_frames`, output `output:osd_frames`): compute timestamp position via native_ui flex (`Container` + `Text`, default bottom-right), render real-clock `%Y-%m-%d %H:%M:%S` text with `bitmap_font` into the incoming RGBA frame's top layer + register in `src/nodes/ui_overlay/BUILD.bazel` (depends on T012)
 - [x] T017 [US1] Implement `VideoEncoderNode` in `src/nodes/video_encoder/video_encoder_node.{h,cc}` as `graph::runtime::Node` (input `input:osd_frames`, output `output:es_packets`): software RGBA→I420 (`rgba_i420`) then `CodecFactory::CreateVideo` (H.264, `input_format: kI420`, 30fps) → `Init` → per-frame pull-mode `Encode(VideoFrame)` → `Packet<VideoPacket>` (Annex-B) → `Flush` at input end + register in `src/nodes/video_encoder/BUILD.bazel` with `@video_codec//src/framework/public:video_codec` dep (depends on T011)
 - [x] T018 [P] [US1] Implement `RecorderNode` in `src/nodes/recorder/recorder_node.{h,cc}` as `graph::runtime::Node` (input `input:es_packets`, output `output:clips`): single-session single-segment lifecycle, counts frames to `duration_seconds × fps` (300), forwards `VideoPacket`s, finalizes on input-done + register in `src/nodes/recorder/BUILD.bazel`
 - [x] T019 [US1] Implement `MuxerSinkNode` in `src/nodes/muxer_sink/muxer_sink_node.{h,cc}` as `graph::runtime::Node` (input `input:clips`): `CodecFactory::CreateMuxer` (`MuxFormat::kMp4`, `fragmented=false` for file output) + `SetOutput(FileByteSink)` on temp file `out/.dashcam.mp4.tmp`, `Push(VideoPacket)` per packet, `Finish()` writes trailer, then atomic rename to `out/dashcam.mp4`; log when overwriting an existing file + register in `src/nodes/muxer_sink/BUILD.bazel` with `@video_codec` public umbrella dep (depends on T004)
-- [x] T020 [US1] Wire the runnable entry `src/examples/dashcam_record.cc`: parse `dashcam_record.json` (graph_runtime schema) into `GraphConfig` via the minimal JSON reader, inject node params into `NodeDef.options` from CLI/defaults, run `PipelineRunner` (frame pacing 30fps), exit 0 on success; add target to `src/examples/BUILD.bazel` with runfiles for the config + asset (depends on T005, T013–T019)
+- [x] T020 [US1] Wire the runnable entry `src/examples/dashcam_record.cc`: parse `dashcam_record.json` (graph_runtime schema) into `GraphConfig` via the minimal JSON reader, inject node params into `NodeDef.options` from CLI/defaults (reusing `src/framework/runner/config_options.{h,cc}` `SetNodeOption`/`GetNodeOption*`), run `PipelineRunner` (frame pacing 30fps), exit 0 on success; add target to `src/examples/BUILD.bazel` with runfiles for the config + asset (depends on T005, T013–T019)
 - [x] T021 [US1] End-to-end test `src/tests/dashcam_record_test.cc`: drive `PipelineRunner` with a short frame count (e.g. 60 frames) via a test config, assert output MP4 exists with `ftyp`/`moov`/`mdat` boxes, expected frame count/duration, timestamp pixels change across frames, and overwrite of an existing file succeeds; register in `src/tests/BUILD.bazel` (depends on T020)
-- [x] T022 [US1] Verify existing dual-cam reference `src/examples/configs/recorder.json` (converted to graph_runtime schema) still passes template validation (8 nodes / 7 streams assertions unchanged); 001 `hello_graph.cc` (media_record skeleton + placeholder nodes) unchanged
+- [x] T022 [US1] Verify existing dual-cam reference `src/examples/configs/recorder.json` (converted to graph_runtime schema) still passes template validation (7 nodes / 6 streams after removing the SignalSource node); 001 `hello_graph.cc` (media_record skeleton + placeholder nodes) unchanged
 
 **Checkpoint**: At this point, User Story 1 is fully functional and independently testable (MVP)
 
@@ -105,7 +104,7 @@ description: "Task list for feature 002-dashcam-sim-recording implementation"
 **Purpose**: Improvements that affect multiple user stories
 
 - [x] T028 [P] Extend `mk/verify.mk` (and Makefile wiring) with a recording-artifact check step: build `//...`, run `bazel test //src/tests:all`, run `dashcam_record` and assert `out/dashcam.mp4` exists and is non-empty (SC-004)
-- [x] T029 [P] Update `media_record/doc/architecture/pipelines.md`: recorder topology reflects the real 7-node graph_runtime implementation, muxer writes via codec `Muxer` + `FileByteSink`, layout/OSD via native_ui flex layout + software draw, execution via `src/framework/runner/` sync driver over `GraphConfig`
+- [x] T029 [P] Update `media_record/doc/architecture/pipelines.md`: recorder topology reflects the real 6-node graph_runtime implementation, muxer writes via codec `Muxer` + `FileByteSink`, layout/OSD via native_ui flex layout + software draw, execution via `src/framework/runner/` sync driver over `GraphConfig`
 - [x] T030 Run `quickstart.md` validation end-to-end from `media_record/media_record/`: `bazel build //...`, `bazel test //src/tests:all`, `make verify`; confirm default run exits 0 and `out/dashcam.mp4` is playable
 
 ---
@@ -138,7 +137,7 @@ description: "Task list for feature 002-dashcam-sim-recording implementation"
 
 - Setup: T002, T003 run in parallel after T001
 - Foundational: T004 (cross-repo) and T005 (runner, depends only on graph_runtime public umbrella) in parallel
-- User Story 1: tests T008–T010 in parallel; helpers T011–T012 in parallel; independent nodes T013, T014, T015, T018 in parallel; then T016 (needs T012), T017 (needs T011), T019 (needs T004); then T020, T021, T022 sequential
+- User Story 1: tests T008–T010 in parallel; helpers T011–T012 in parallel; independent nodes T013, T015, T018 in parallel; then T016 (needs T012), T017 (needs T011), T019 (needs T004); then T020, T021, T022 sequential
 - User Story 3: T024, T025, T026 in parallel after T023's contract is fixed; T027 after them
 
 ---
@@ -149,11 +148,10 @@ description: "Task list for feature 002-dashcam-sim-recording implementation"
 # Launch all US1 tests together (write-first, expect FAIL):
 Task: "T008 Unit test software RGBA->I420 in src/tests/rgba_i420_test.cc"
 Task: "T009 Unit test bitmap-font timestamp renderer in src/tests/bitmap_font_test.cc"
-Task: "T010 Unit tests for StreamInputNode + SignalSourceNode in src/tests/source_nodes_test.cc"
+Task: "T010 Unit tests for StreamInputNode in src/tests/source_nodes_test.cc"
 
 # Launch all independent source nodes together:
 Task: "T013 Implement StreamInputNode (graph::runtime::Node) in src/nodes/stream_input/stream_input_node.{h,cc}"
-Task: "T014 Implement SignalSourceNode (graph::runtime::Node) in src/nodes/signal_source/signal_source_node.{h,cc}"
 Task: "T015 Implement MultiViewLayoutNode (graph::runtime::Node) in src/nodes/multi_view_layout/multi_view_layout_node.{h,cc}"
 Task: "T018 Implement RecorderNode (graph::runtime::Node) in src/nodes/recorder/recorder_node.{h,cc}"
 ```

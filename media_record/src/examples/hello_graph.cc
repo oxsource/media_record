@@ -63,7 +63,6 @@ class PlaceholderNode : public Node {
 // audio_encoder (AudioEncoderNode) — those pipelines are config-validation-only
 // this feature (spec SC-008).
 DEFINE_RECORDER_PLACEHOLDER(StreamInputNode, "stream_input");
-DEFINE_RECORDER_PLACEHOLDER(SignalSourceNode, "signal_source");
 DEFINE_RECORDER_PLACEHOLDER(MultiViewLayoutNode, "multi_view_layout");
 DEFINE_RECORDER_PLACEHOLDER(UiOverlayNode, "ui_overlay");
 DEFINE_RECORDER_PLACEHOLDER(VideoEncoderNode, "video_encoder");

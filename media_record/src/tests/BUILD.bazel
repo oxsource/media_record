@@ -31,14 +31,15 @@ cc_test(
     ],
 )
 
-# Sync-runner unit tests (spec 002, Phase 2 foundation): stub graph_runtime
-# nodes driven by PipelineRunner over a GraphConfig.
+# GraphRuntime-driven async execution unit tests (spec 002, Phase 2): stub
+# graph_runtime nodes driven directly through the runtime (no runner module):
+# topology completion, source-frame budget, unregistered-type locality, error
+# propagation with the failing node's name, and cycle rejection.
 cc_test(
     name = "pipeline_runner_test",
     size = "small",
     srcs = ["pipeline_runner_test.cc"],
     deps = [
-        "//src/framework/runner:runner",
         "@com_google_googletest//:gtest_main",
         "@graph_runtime//src/framework/public:runtime",
     ],
@@ -79,8 +80,6 @@ cc_test(
     linkopts = ["-Wl,-force_load,$(execpath @ffmpeg//:ffmpeg_codec_archive)"],
     linkstatic = True,  # ADR-001: keep FFmpeg statically force-loaded
     deps = [
-        "//src/nodes/signal_source:signal_event",
-        "//src/nodes/signal_source:signal_source",
         "//src/nodes/stream_input:stream_input",
         "@com_google_googletest//:gtest_main",
         "@graph_runtime//src/framework/public:runtime",
@@ -89,7 +88,7 @@ cc_test(
     ],
 )
 
-# End-to-end recording test (spec 002, T021): runs the real 7-node graph_runtime
+# End-to-end recording test (spec 002, T021): runs the real 6-node graph_runtime
 # pipeline with a short budget and asserts a playable MP4.
 cc_test(
     name = "dashcam_record_test",
@@ -106,11 +105,9 @@ cc_test(
     # dropped (avcodec_find_encoder crashes at runtime).
     linkstatic = True,
     deps = [
-        "//src/framework/runner:runner",
         "//src/nodes/multi_view_layout:multi_view_layout",
         "//src/nodes/muxer_sink:muxer_sink",
         "//src/nodes/recorder:recorder",
-        "//src/nodes/signal_source:signal_source",
         "//src/nodes/stream_input:stream_input",
         "//src/nodes/ui_overlay:ui_overlay",
         "//src/nodes/video_encoder:video_encoder",

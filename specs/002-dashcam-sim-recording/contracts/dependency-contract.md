@@ -31,8 +31,8 @@ media_record pipeline **不直接链接** `@ffmpeg` / `@libyuv`（不引入 skia
 | D-3 | `VideoEncoder` FFmpeg backend 仅接受 I420 / NV12（`kRGBA` → `kUnsupportedFormat`）→ RGBA→I420 由 media_record 内置软件转换完成 |
 | D-4 | `Muxer::SetOutput(ByteSink*)` 为公共接口；`Muxer` 输出经 `FileByteSink` 写临时文件，成功后原子 rename 落盘（FR-009） |
 | D-5 | native_ui host `Surface` 无公共像素回读（`CreateFromBuffer` Android-only stub）→ 画面像素由 media_record 软件绘制（flex 布局定位 + 位图字体） |
-| D-6 | graph_runtime `GraphRuntime` 执行类不连接节点内部流（`AddMirror` 无调用点）→ 本图由 media_record `PipelineRunner`（`src/framework/runner/`）在调用线程上按拓扑序驱动 `GraphContext` + 手工搬运 `Packet` 执行（对齐 `string_pipeline.cc` 模式） |
-| D-7 | **解析复用 graph_runtime `JsonParser`**（经公共 `runtime` target 导出，media_record 不再有自有 JSON 读取器）；`JsonParser` 解析每节点 `"options"` 对象为 `NodeDef.options`（标量类型映射），节点参数配置在 JSON 里；可选 CLI 仅补丁对应节点 options |
+| D-6 | graph_runtime `GraphRuntime` 执行类原本不连接节点内部流（`AddMirror` 无调用点）→ 本 feature 向 graph_runtime **补足内部流接线**（跨仓改动，作为 graph_runtime 能力回流）：新增 `src/framework/config/stream_name.h`（`PortName`/`StreamName`）；`Initialize` 输入端口按 port 名注册、按 stream 名 `AddMirror` 连接 producer→consumer、仅 `config.input_streams` 计入图完成计数；async 完成路径关闭全部节点（`CloseAllNodes`）；节点 Process 错误经 `SchedulerQueue` error callback 传播。media_record **无独立 runner 模块**：录制入口 `dashcam_record.cc` 内联 `GraphRuntime` 生命周期（`Initialize`→`Start`→`WaitUntilDone`→`Shutdown`），帧率 pacing 与帧预算在 `StreamInputNode`（`NodeOptions` `fps`/`frame_count`） |
+| D-7 | **解析复用 graph_runtime `JsonParser`**（经公共 `runtime` target 导出，media_record 不再有自有 JSON 读取器）；`JsonParser` 解析每节点 `"options"` 对象为 `NodeDef.options`（标量类型映射），节点参数配置在 JSON 里；可选 CLI 补丁经 graph_runtime 的节点注入 `GraphRuntime::Options`（参数对象，`nodes` map 按节点类型覆盖 options，`Initialize(config, options)` 在构建前合并）打到匹配节点的 options |
 | D-8 | 路径可覆盖沿用 001：`media_record_deps.bzl` 常量 / `.user.bazelrc` |
 | D-9 | **命名避让**：media_record 不得在 `src/framework/stream/`、`src/framework/config/` 下放置文件（graph_runtime 同名目录会被主 workspace include 遮蔽） |
 

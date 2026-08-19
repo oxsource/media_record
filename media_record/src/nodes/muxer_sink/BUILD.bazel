@@ -2,15 +2,15 @@ package(default_visibility = ["//visibility:public"])
 
 # MuxerSinkNode (spec 002): graph_runtime node; video_codec public Muxer (MP4)
 # via FileByteSink to a temp file + atomic rename; no partial artifacts on
-# failure (FR-009). Reads the runner's shared pipeline_failed signal so a
-# failed run discards partial output instead of finalizing it.
+# failure (FR-009). Reads the runner's pipeline_failed side packet (a bool* to
+# the runner-local flag) so a failed run discards partial output instead of
+# finalizing it.
 
 cc_library(
     name = "muxer_sink",
     srcs = ["muxer_sink_node.cc"],
     hdrs = ["muxer_sink_node.h"],
     deps = [
-        "//src/framework/runner:runner",
         "@graph_runtime//src/framework/public:runtime",
         "@video_codec//src/framework/public:video_codec",
     ],

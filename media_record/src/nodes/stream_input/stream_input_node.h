@@ -12,8 +12,10 @@
 // graph_runtime source node (no input ports): Open() decodes the configured
 // image (NodeOptions "image") into an RGBA buffer; each Process() emits one
 // Packet<video::codec::VideoFrame> on port "output" (stream "output:frames")
-// with a real-clock timestamp, and returns StatusStop() once the frame budget
-// (NodeOptions "frame_count") is exhausted.
+// with a real-clock timestamp, paced to NodeOptions "fps" against the wall
+// clock (the async scheduler re-invokes source nodes while active), and
+// returns StatusStop() once the frame budget (NodeOptions "frame_count") is
+// exhausted.
 
 namespace media::record {
 
@@ -37,6 +39,7 @@ class StreamInputNode : public graph::runtime::Node {
 
   std::vector<uint8_t> image_;  // decoded RGBA pixels
   int64_t frame_index_ = 0;
+  int64_t pacing_start_us_ = 0;  // wall-clock base for FPS pacing (Open())
 };
 
 }  // namespace media::record

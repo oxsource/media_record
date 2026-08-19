@@ -8,7 +8,6 @@
 #include "src/framework/node/node_contract.h"
 #include "src/framework/node/node_options.h"
 #include "src/framework/node/node_registry.h"
-#include "src/framework/runner/runner_state.h"
 #include "src/framework/stream/packet.h"
 
 namespace media::record {
@@ -102,11 +101,22 @@ absl::Status MuxerSinkNode::Process(graph::runtime::GraphContext& ctx) {
   return absl::OkStatus();
 }
 
-absl::Status MuxerSinkNode::Close(graph::runtime::GraphContext&) {
+absl::Status MuxerSinkNode::Close(graph::runtime::GraphContext& ctx) {
   // Finalize only on a successful run: Finish() writes the trailer, then the
   // temp file is atomically renamed to the target. On failure (or a partial
   // run) the temp file is removed so no broken artifact remains (FR-009).
-  if (muxer_ && sink_ && !RunnerStateGlobal().pipeline_failed && !finished_) {
+  //
+  // The failure flag is delivered as a side packet holding a bool* to the
+  // runner's local pipeline_failed (set by the graph error callback). Read it
+  // back here instead of touching a process-global.
+  bool pipeline_failed = false;
+  const graph::runtime::Packet sp =
+      ctx.InputSidePackets().Get("pipeline_failed");
+  if (!sp.IsEmpty()) {
+    auto pf = sp.Get<bool*>();
+    if (pf.ok() && pf.value() != nullptr) pipeline_failed = *pf.value();
+  }
+  if (muxer_ && sink_ && !pipeline_failed && !finished_) {
     finished_ = true;
     const video::codec::Status s = muxer_->Finish();
     if (s != video::codec::Status::kOk) {

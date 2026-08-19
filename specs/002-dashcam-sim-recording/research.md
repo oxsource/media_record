@@ -2,16 +2,15 @@
 
 **Branch**: `002-dashcam-sim-recording` | **Date**: 2026-08-18 | **Spec**: [spec.md](spec.md)
 
-## 1. 节点实现范围（7 类，FR-010）
+## 1. 节点实现范围（6 类，FR-010）
 
 ### Decision
 
-recorder.json 引用 8 个节点实例、7 类节点类型。本期将 7 类节点全部实现为可运行的真实实现；AudioEncoder / StreamSink / Preview 3 类节点保持 001 骨架：
+dashcam_record.json / recorder.json 引用 6 类节点类型。本期将 6 类节点全部实现为可运行的真实实现；AudioEncoder / StreamSink / Preview 3 类节点保持 001 骨架：
 
 | 节点目录 | 注册名（type） | 职责（本期真实实现） |
 |----------|---------------|----------------------|
 | `stream_input` | `StreamInputNode` | 解码默认图片 → 逐帧输出 `Packet<VideoFrame>`（RGBA），带真实时钟时间戳 |
-| `signal_source` | `SignalSourceNode` | 输出 `Packet<SignalEvent>`（本期输出最小事件序列，旁路给 OSD） |
 | `multi_view_layout` | `MultiViewLayoutNode` | 用 native_ui flex 布局（`Container` + `ExternalImage`）确定画面结构与位置，软件渲染基帧（本期单视图；不实现多路拼接） |
 | `ui_overlay` | `UiOverlayNode` | 以 flex 布局定位 + 软件位图字体绘制时间戳文字（真实时钟，逐帧更新），叠加于画面固定角落 |
 | `video_encoder` | `VideoEncoderNode` | 软件 RGBA→I420（media_record 内置）+ video_codec `VideoEncoder`（H.264）编码 |
@@ -20,8 +19,8 @@ recorder.json 引用 8 个节点实例、7 类节点类型。本期将 7 类节�
 
 ### Rationale
 
-- spec FR-010 明确本期交付范围为 recorder.json 引用的 7 类节点；其余 3 类不在本期范围。
-- recorder.json（双摄参考模板）与 pipeline_config_test 的断言（8 nodes / 7 streams）**保持不变**；本期新增**单路可运行默认配置** `dashcam_record.json`（1×StreamInput + SignalSource + Layout + Overlay + Encoder + Recorder + Muxer），符合「以单张图片模拟单路输入」的假设。
+- spec FR-010 明确本期交付范围为记录仪 pipeline 引用的 6 类节点；其余 3 类不在本期范围。
+- recorder.json（双摄参考模板）移除 SignalSource 后为 7 nodes / 6 streams；本期另设**单路可运行默认配置** `dashcam_record.json`（StreamInput + Layout + Overlay + Encoder + Recorder + Muxer），符合「以单张图片模拟单路输入」的假设。
 
 ### Alternatives considered
 
@@ -79,7 +78,7 @@ recorder.json 引用 8 个节点实例、7 类节点类型。本期将 7 类节�
 - `MultiViewLayoutNode`：构建 native_ui widget 树 `Container`（flex）挂 `ExternalImage`（输入图片）+ `Text`（时间戳文本，本期由 OSD 绘制），`Layout(width, height)` 后读子组件 bounds → 将输入图片软件 blit 进 media_record 自有 RGBA 帧缓冲（铺满整帧，作为底层）。
 - `UiOverlayNode`：以 flex 布局给出的时间戳位置，用**软件位图字体**（内嵌 5×7 或 8×13 数字/分隔符字形）将真实时钟时间戳文字绘制进 RGBA 帧缓冲（默认右下角，白字 + 半透明黑底衬底，保证可辨）。
 - 文字内容：真实时钟 `YYYY-MM-DD HH:MM:SS`（`std::chrono::system_clock` + `strftime`），每帧取当前时间 → 随录制逐帧递增。
-- 输入 tag `video` 接画面帧、`signal` 接事件（本期 OSD 只渲染时间戳，事件可忽略/可叠加简单标记）。
+- 输入 tag `video` 接画面帧。
 
 ### Rationale
 
@@ -99,9 +98,9 @@ recorder.json 引用 8 个节点实例、7 类节点类型。本期将 7 类节�
 
 新增 `src/framework/transport/` 模块（**不用 `stream/` 命名**：graph_runtime 公共头以相对路径引用其自有 `src/framework/stream/packet.h`，同名路径会被主 workspace include 遮蔽，破坏 deps_smoke_test，T004 验证时发现）：
 
-- `packet.h`：`media::record::Packet`，`std::variant` 持有 `video::codec::VideoFrame` / `video::codec::VideoPacket` / `SignalEvent`（v1），附 `stream_name` 与 `pts_us`。
+- `packet.h`：`media::record::Packet`，`std::variant` 持有 `video::codec::VideoFrame` / `video::codec::VideoPacket`（v1），附 `stream_name` 与 `pts_us`。
 - `stream_buffer.h`：按流名的有界信箱（`stream_name → deque<Packet>`，容量上限 + EOS 标记），单消费者语义。
-- `stream_node.h`：扩展 001 `Node` 的带流 I/O 接口（`AttachStreams` + `Input()/Output()`），供 7 类节点读写缓冲。
+- `stream_node.h`：扩展 001 `Node` 的带流 I/O 接口（`AttachStreams` + `Input()/Output()`），供 6 类节点读写缓冲。
 - `pipeline_runner.{h,cc}`：读取 `PipelineConfig` → 经 `NodeRegistry::Create(type)` 实例化节点 → 按 `streams[]` 连接 input/output → **同步 frame loop**：按拓扑序逐帧驱动（source 节点先产出，下游消费），到 `frame_count` 帧后标记全部流 EOS 并 drain（节点在 EOS+空输入时 flush/finalize，如编码器收尾、recorder 会话结束、muxer 写 trailer），最后按逆拓扑序逐节点 `Close()`。
 
 ### Rationale
@@ -147,7 +146,7 @@ recorder.json 引用 8 个节点实例、7 类节点类型。本期将 7 类节�
 
 ## 9. 测试与验证（SC-001~005）
 
-- 节点单测：软件位图字体绘制（时间戳文字出现在预期区域且逐帧变化）、软件 RGBA→I420 转换（尺寸/格式正确）、SignalSource 事件计数。
+- 节点单测：软件位图字体绘制（时间戳文字出现在预期区域且逐帧变化）、软件 RGBA→I420 转换（尺寸/格式正确）。
 - 端到端 `dashcam_record_test.cc`：短帧数（如 60 帧）驱动 `PipelineRunner`，断言输出 MP4 存在、含 `ftyp` / `moov` / `mdat`、帧数匹配、时间戳文字逐帧递增（经 codec `Muxer` + `FileByteSink` 落盘）。
 - `pipeline_config_test.cc`：把 `dashcam_record.json` 加入模板校验清单。
 - `make verify`：`bazel build //...` + `bazel test //src/tests:all` + 运行录制入口并检查产物存在（SC-004）。

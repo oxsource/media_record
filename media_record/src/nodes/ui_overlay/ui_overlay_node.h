@@ -9,9 +9,8 @@
 //
 // The timestamp text is positioned with native_ui flex layout (Container +
 // Text, anchored to the bottom-right corner) and drawn into the frame's RGBA
-// buffer with the software bitmap font (research.md §4). Inputs: "video"
-// (stream "video:view_frames") and "signal" (stream "signal:signals", bypass
-// events ignored this feature). graph_runtime node; timestamp format from
+// buffer with the software bitmap font (research.md §4). Input: "video"
+// (stream "video:view_frames"). graph_runtime node; timestamp format from
 // NodeOptions "format".
 
 namespace media::record {

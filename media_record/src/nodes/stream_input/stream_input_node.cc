@@ -3,6 +3,7 @@
 #include <chrono>
 #include <memory>
 #include <string>
+#include <thread>
 
 #include "native_ui/render.h"
 #include "src/framework/node/graph_context.h"
@@ -66,6 +67,7 @@ absl::Status StreamInputNode::Open(graph::runtime::GraphContext&) {
         "'");
   }
   frame_index_ = 0;
+  pacing_start_us_ = NowUs();
   return absl::OkStatus();
 }
 
@@ -76,6 +78,17 @@ absl::Status StreamInputNode::Close(graph::runtime::GraphContext&) {
 absl::Status StreamInputNode::Process(graph::runtime::GraphContext& ctx) {
   if (frame_index_ >= frame_count_) {
     return graph::runtime::StatusStop();
+  }
+
+  // Frame pacing: align each emitted frame to the wall-clock cadence of the
+  // configured FPS (the async scheduler re-invokes source nodes while active,
+  // so the sleep lives here).
+  const int64_t now_us = NowUs();
+  const int64_t target_us =
+      pacing_start_us_ + frame_index_ * 1000000LL / fps_;
+  if (target_us > now_us) {
+    std::this_thread::sleep_for(
+        std::chrono::microseconds(target_us - now_us));
   }
 
   video::codec::VideoFrame frame;

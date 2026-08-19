@@ -11,7 +11,6 @@
 #include "src/framework/node/node_options.h"
 #include "src/framework/node/node_registry.h"
 #include "src/framework/stream/packet.h"
-#include "src/nodes/signal_source/signal_event.h"
 #include "src/nodes/ui_overlay/bitmap_font.h"
 #include "video_codec/video_codec.h"
 
@@ -47,7 +46,6 @@ UiOverlayNode::UiOverlayNode(const std::string& name,
 
 absl::Status UiOverlayNode::GetContract(graph::runtime::NodeContract* c) {
   c->Inputs().Get("video").Set<video::codec::VideoFrame>();
-  c->Inputs().Get("signal").Set<SignalEvent>();
   c->Outputs().Get("output").Set<video::codec::VideoFrame>();
   return absl::OkStatus();
 }
@@ -61,12 +59,6 @@ absl::Status UiOverlayNode::Close(graph::runtime::GraphContext&) {
 }
 
 absl::Status UiOverlayNode::Process(graph::runtime::GraphContext& ctx) {
-  // Bypass signal events are consumed and ignored: this feature renders only
-  // the real-clock timestamp OSD; events are a reserved extension point. The
-  // runner moved all pending signal packets into this shard — ignoring them
-  // keeps the signal stream drained.
-  (void)ctx.Inputs().Get("signal");
-
   auto& in = ctx.Inputs().Get("video");
   if (in.IsEmpty()) return absl::OkStatus();  // nothing to overlay this pass
   auto frame_or = in.Value().Share<video::codec::VideoFrame>();
