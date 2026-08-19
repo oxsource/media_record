@@ -5,7 +5,7 @@
 #include <string>
 #include <vector>
 
-#include "src/framework/node/node.h"
+#include "graph_runtime/node.h"
 
 // StreamInputNode (spec 002): simulates a camera input from a static image.
 //

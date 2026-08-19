@@ -4,7 +4,7 @@
 #include <memory>
 #include <string>
 
-#include "src/framework/node/node.h"
+#include "graph_runtime/node.h"
 #include "video_codec/video_codec.h"
 
 // MuxerSinkNode (spec 002): writes the encoded packets into an MP4 file.

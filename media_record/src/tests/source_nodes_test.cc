@@ -10,10 +10,10 @@
 #include <string>
 
 #include "gtest/gtest.h"
-#include "src/framework/node/graph_context.h"
-#include "src/framework/node/node_contract.h"
-#include "src/framework/node/node_options.h"
-#include "src/framework/stream/packet.h"
+#include "graph_runtime/graph_context.h"
+#include "graph_runtime/node_contract.h"
+#include "graph_runtime/node_options.h"
+#include "graph_runtime/packet.h"
 #include "src/nodes/stream_input/stream_input_node.h"
 #include "video_codec/video_codec.h"
 

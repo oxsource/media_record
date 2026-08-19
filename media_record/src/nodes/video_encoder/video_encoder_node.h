@@ -4,7 +4,7 @@
 #include <memory>
 #include <vector>
 
-#include "src/framework/node/node.h"
+#include "graph_runtime/node.h"
 #include "video_codec/video_codec.h"
 
 // VideoEncoderNode (spec 002): H.264 encodes the OSD frames.

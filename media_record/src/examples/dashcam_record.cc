@@ -31,10 +31,10 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
-#include "src/framework/config/config_validator.h"
-#include "src/framework/config/json/json_parser.h"
-#include "src/framework/node/node_registry.h"
-#include "src/framework/public/graph_runtime.h"
+#include "graph_runtime/config_validator.h"
+#include "graph_runtime/json_parser.h"
+#include "graph_runtime/node_registry.h"
+#include "graph_runtime/runtime.h"
 
 namespace {
 

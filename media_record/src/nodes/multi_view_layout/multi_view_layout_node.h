@@ -1,7 +1,7 @@
 #ifndef MEDIA_RECORD_NODES_MULTI_VIEW_LAYOUT_MULTI_VIEW_LAYOUT_NODE_H_
 #define MEDIA_RECORD_NODES_MULTI_VIEW_LAYOUT_MULTI_VIEW_LAYOUT_NODE_H_
 
-#include "src/framework/node/node.h"
+#include "graph_runtime/node.h"
 
 // MultiViewLayoutNode (spec 002): composes the input frame into the recording
 // canvas using native_ui flex layout (Container + ExternalImage) and renders

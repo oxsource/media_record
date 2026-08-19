@@ -3,7 +3,7 @@
 
 #include <cstdint>
 
-#include "src/framework/node/node.h"
+#include "graph_runtime/node.h"
 
 // RecorderNode (spec 002): single-session single-segment recording.
 //

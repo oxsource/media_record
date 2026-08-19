@@ -3,7 +3,7 @@
 
 #include <string>
 
-#include "src/framework/node/node.h"
+#include "graph_runtime/node.h"
 
 // UiOverlayNode (spec 002): overlays the real-clock timestamp on the frame.
 //

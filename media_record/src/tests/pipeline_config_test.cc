@@ -14,8 +14,8 @@
 #include <string>
 
 #include "gtest/gtest.h"
-#include "src/framework/config/config_validator.h"
-#include "src/framework/config/json/json_parser.h"
+#include "graph_runtime/config_validator.h"
+#include "graph_runtime/json_parser.h"
 
 namespace media::record::config {
 namespace {
