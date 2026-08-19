@@ -82,10 +82,11 @@ media_record/                              (repo root)
     │   │   ├── public/                    (001 骨架，保持不变)
     │   │   ├── node/                      (001 骨架，保持不变)
     │   │   ├── config/                    (001 交付，保持不变)
-    │   │   └── stream/                    (本期新增：帧传输层)
+    │   │   └── transport/                (本期新增：帧传输层，见下)
     │   │       ├── BUILD.bazel
     │   │       ├── packet.h               (Packet：VideoFrame / VideoPacket / SignalEvent)
     │   │       ├── stream_buffer.h        (按流名的有界信箱)
+    │   │       ├── stream_node.h          (带流 I/O 的节点接口，扩展 001 Node)
     │   │       └── pipeline_runner.{h,cc} (拓扑排序 + 同步 frame loop 运行器)
     │   ├── nodes/                         (7 类节点真实实现，替换 001 占位)
     │   │   ├── stream_input/              (StreamInputNode → Packet<VideoFrame>)
@@ -116,7 +117,7 @@ media_record/                              (repo root)
     └── doc/architecture/                  (更新 pipelines.md 的记录仪运行拓扑)
 ```
 
-**Structure Decision**: 在 001 既有骨架内做**增量实现**：新增 `src/framework/stream/`（帧传输 + 运行器）作为 7 类节点的数据通路；7 个节点目录由「空 BUILD + 占位头」升级为「真实 cc_library + 实现」，命名与 target 命名沿用 001 约定；录制入口与默认配置放 `src/examples/`，端到端测试放 `src/tests/`。公共 target（`//src/framework/public:media_record`）保持 header-only 不变，跨库链接由节点库 / 示例 / 测试承担（延续 001 决策）。MP4 封装复用 video_codec 公共面 `Muxer` + `FileByteSink`；为此需在 video_codec 公共 umbrella 增加 io 导出（`ByteSink` / `FileByteSink`，public BUILD deps + io 可见性 + dist 头文件拷贝）作为**前置跨仓任务**（见 `contracts/dependency-contract.md` D-1）。
+**Structure Decision**: 在 001 既有骨架内做**增量实现**：新增 `src/framework/transport/`（帧传输 + 运行器）作为 7 类节点的数据通路；7 个节点目录由「空 BUILD + 占位头」升级为「真实 cc_library + 实现」，命名与 target 命名沿用 001 约定；录制入口与默认配置放 `src/examples/`，端到端测试放 `src/tests/`。公共 target（`//src/framework/public:media_record`）保持 header-only 不变，跨库链接由节点库 / 示例 / 测试承担（延续 001 决策）。MP4 封装复用 video_codec 公共面 `Muxer` + `FileByteSink`；为此需在 video_codec 公共 umbrella 增加 io 导出（`ByteSink` / `FileByteSink`，public BUILD deps + io 可见性 + dist 头文件拷贝）作为**前置跨仓任务**（见 `contracts/dependency-contract.md` D-1）。帧传输层用 `transport/` 而非 `stream/` 命名：graph_runtime 公共头以相对路径引用其自有 `src/framework/stream/packet.h`，同名路径会被主 workspace include 遮蔽，破坏 deps_smoke_test（T004 验证时发现）。
 
 ## Complexity Tracking
 
@@ -124,7 +125,7 @@ media_record/                              (repo root)
 
 | Violation | Why Needed | Simpler Alternative Rejected Because |
 |-----------|------------|-------------------------------------|
-| `src/framework/stream/` 帧传输 + 运行器（≈150 行） | 7 类节点需共享 VideoFrame/VideoPacket 数据通路；001 骨架 Node 无数据流接口 | 节点间直接传参耦合（破坏 config 驱动拓扑）；引入 graph_runtime 运行时（其公共 umbrella 不导出 GraphRuntime 执行类）不可行 |
+| `src/framework/transport/` 帧传输 + 运行器（≈180 行） | 7 类节点需共享 VideoFrame/VideoPacket 数据通路；001 骨架 Node 无数据流接口 | 节点间直接传参耦合（破坏 config 驱动拓扑）；引入 graph_runtime 运行时（其公共 umbrella 不导出 GraphRuntime 执行类）不可行 |
 | UiOverlay 用软件位图字体绘制 OSD（位置由 native_ui flex 布局给出） | native_ui host 的 Surface 无公共像素回读（仅 Dump→PNG；`CreateFromBuffer` Android-only stub），无法经 Canvas 取回 RGBA | 每帧 Dump PNG 再解码（性能不可行）；扩展 native_ui 增加 host 像素回读（第二处跨仓改动，超出本期，记录为后续项） |
 | video_codec 公共 umbrella 前置扩展（导出 `ByteSink`/`FileByteSink`） | codec `Muxer` 输出依赖 `io::ByteSink`，而 io 模块不在公共 umbrella 导出且可见性受限（`io/BUILD.bazel`） | media_record 直用 vendored FFmpeg 封装（违背「不再引入 ffmpeg」澄清，弃）；自研 MP4 muxer（重复实现，弃）；直接消费 video_codec io 内部 target（可见性受限且违背公共面契约，不可行） |
 | MuxerSink 经 `FileByteSink` 临时文件 + 原子 rename 落盘 | 失败不残留残缺产物（FR-009）且输出可覆盖旧文件 | 直接写目标路径（失败残留半成品）；同步 rename 不可（跨平台保证，弃） |

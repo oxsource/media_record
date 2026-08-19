@@ -93,15 +93,16 @@ recorder.json 引用 8 个节点实例、7 类节点类型。本期将 7 类节�
 - native_ui Canvas → Surface → `Dump` PNG → 再解码：性能不可行（每帧一次 PNG 编解码）。**拒绝**。
 - FFmpeg drawtext 滤镜：需额外字体资源，且 media_record 不再引入 FFmpeg。**拒绝**。
 
-## 5. 帧传输与运行器（src/framework/stream/）
+## 5. 帧传输与运行器（src/framework/transport/）
 
 ### Decision
 
-新增 `src/framework/stream/` 模块：
+新增 `src/framework/transport/` 模块（**不用 `stream/` 命名**：graph_runtime 公共头以相对路径引用其自有 `src/framework/stream/packet.h`，同名路径会被主 workspace include 遮蔽，破坏 deps_smoke_test，T004 验证时发现）：
 
-- `packet.h`：`media::record::Packet`，轻量持有 `video::codec::VideoFrame` / `video::codec::VideoPacket` / `SignalEvent`（v1 用 `std::any` 或 union 风格包装，单消费者语义）。
-- `stream_buffer.h`：按流名的有界信箱（`stream_name → deque<Packet>`），供节点 input/output 读取与写入。
-- `pipeline_runner.{h,cc}`：读取 `PipelineConfig` → 经 `NodeRegistry::Create(type)` 实例化节点 → 按 `streams[]` 连接 input/output → **同步 frame loop**：按拓扑序逐帧驱动 source 节点（StreamInput 每帧产出一帧，SignalSource 周期产出事件），下游节点消费输入、产输出，直到 300 帧（10s×30fps）结束 → 逐节点 `Close()`（recorder 收尾、muxer 写 trailer）。
+- `packet.h`：`media::record::Packet`，`std::variant` 持有 `video::codec::VideoFrame` / `video::codec::VideoPacket` / `SignalEvent`（v1），附 `stream_name` 与 `pts_us`。
+- `stream_buffer.h`：按流名的有界信箱（`stream_name → deque<Packet>`，容量上限 + EOS 标记），单消费者语义。
+- `stream_node.h`：扩展 001 `Node` 的带流 I/O 接口（`AttachStreams` + `Input()/Output()`），供 7 类节点读写缓冲。
+- `pipeline_runner.{h,cc}`：读取 `PipelineConfig` → 经 `NodeRegistry::Create(type)` 实例化节点 → 按 `streams[]` 连接 input/output → **同步 frame loop**：按拓扑序逐帧驱动（source 节点先产出，下游消费），到 `frame_count` 帧后标记全部流 EOS 并 drain（节点在 EOS+空输入时 flush/finalize，如编码器收尾、recorder 会话结束、muxer 写 trailer），最后按逆拓扑序逐节点 `Close()`。
 
 ### Rationale
 

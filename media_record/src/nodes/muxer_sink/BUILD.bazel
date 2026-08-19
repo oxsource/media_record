@@ -1,6 +1,16 @@
 package(default_visibility = ["//visibility:public"])
 
+# MuxerSinkNode (spec 002): video_codec public Muxer (MP4) via FileByteSink to
+# a temp file + atomic rename; no partial artifacts on failure (FR-009).
 cc_library(
     name = "muxer_sink",
+    srcs = ["muxer_sink_node.cc"],
+    hdrs = ["muxer_sink_node.h"],
+    deps = [
+        "//src/framework/public:media_record",
+        "//src/framework/transport:transport",
+        "@video_codec//src/framework/public:video_codec",
+    ],
+    alwayslink = True,
     visibility = ["//visibility:public"],
 )

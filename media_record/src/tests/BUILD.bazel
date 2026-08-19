@@ -18,10 +18,106 @@ cc_test(
     name = "deps_smoke_test",
     size = "small",
     srcs = ["deps_smoke_test.cc"],
+    data = ["@ffmpeg//:ffmpeg_codec_archive"],  # ADR-001
+    linkopts = ["-Wl,-force_load,$(execpath @ffmpeg//:ffmpeg_codec_archive)"],
+    linkstatic = True,  # ADR-001: keep FFmpeg statically force-loaded
     deps = [
         "//src/framework/public:media_record",
         "@com_google_googletest//:gtest_main",
         "@graph_runtime//src/framework/public:runtime",
+        "@native_ui//:native_ui",
+        "@video_codec//src/framework/public:video_codec",
+    ],
+)
+
+# Frame-transport runner unit test (spec 002, Phase 2 foundation).
+cc_test(
+    name = "pipeline_runner_test",
+    size = "small",
+    srcs = ["pipeline_runner_test.cc"],
+    data = ["@ffmpeg//:ffmpeg_codec_archive"],  # ADR-001
+    linkopts = ["-Wl,-force_load,$(execpath @ffmpeg//:ffmpeg_codec_archive)"],
+    linkstatic = True,  # ADR-001: keep FFmpeg statically force-loaded
+    deps = [
+        "//src/framework/config:config",
+        "//src/framework/public:media_record",
+        "//src/framework/transport:transport",
+        "@com_google_googletest//:gtest_main",
+        "@video_codec//src/framework/public:video_codec",
+    ],
+)
+
+# Software RGBA -> I420 converter unit test (spec 002, T008).
+cc_test(
+    name = "rgba_i420_test",
+    size = "small",
+    srcs = ["rgba_i420_test.cc"],
+    deps = [
+        "//src/nodes/video_encoder:rgba_i420",
+        "@com_google_googletest//:gtest_main",
+    ],
+)
+
+# Bitmap-font timestamp renderer unit test (spec 002, T009).
+cc_test(
+    name = "bitmap_font_test",
+    size = "small",
+    srcs = ["bitmap_font_test.cc"],
+    deps = [
+        "//src/nodes/ui_overlay:bitmap_font",
+        "@com_google_googletest//:gtest_main",
+    ],
+)
+
+# Source-node unit tests (spec 002, T010).
+cc_test(
+    name = "source_nodes_test",
+    size = "small",
+    srcs = ["source_nodes_test.cc"],
+    data = [
+        "//src/examples/assets:assets",
+        "@ffmpeg//:ffmpeg_codec_archive",  # ADR-001
+    ],
+    linkopts = ["-Wl,-force_load,$(execpath @ffmpeg//:ffmpeg_codec_archive)"],
+    linkstatic = True,  # ADR-001: keep FFmpeg statically force-loaded
+    deps = [
+        "//src/framework/public:media_record",
+        "//src/framework/transport:transport",
+        "//src/nodes/signal_source:signal_source",
+        "//src/nodes/stream_input:stream_input",
+        "@com_google_googletest//:gtest_main",
+        "@video_codec//src/framework/public:video_codec",
+    ],
+)
+
+# End-to-end recording test (spec 002, T021): runs the real 7-node pipeline
+# with a short budget and asserts a playable MP4.
+cc_test(
+    name = "dashcam_record_test",
+    size = "medium",
+    srcs = ["dashcam_record_test.cc"],
+    data = [
+        "//src/examples/assets:assets",
+        "//src/examples/configs:configs",
+        "@ffmpeg//:ffmpeg_codec_archive",  # ADR-001
+    ],
+    linkopts = ["-Wl,-force_load,$(execpath @ffmpeg//:ffmpeg_codec_archive)"],
+    # Force static linkage (ADR-001): avoids Bazel building @video_codec as a
+    # shared solib dylib where the lazy-linked FFmpeg archive members are
+    # dropped (avcodec_find_encoder crashes at runtime).
+    linkstatic = True,
+    deps = [
+        "//src/framework/config:config",
+        "//src/framework/public:media_record",
+        "//src/framework/transport:transport",
+        "//src/nodes/multi_view_layout:multi_view_layout",
+        "//src/nodes/muxer_sink:muxer_sink",
+        "//src/nodes/recorder:recorder",
+        "//src/nodes/signal_source:signal_source",
+        "//src/nodes/stream_input:stream_input",
+        "//src/nodes/ui_overlay:ui_overlay",
+        "//src/nodes/video_encoder:video_encoder",
+        "@com_google_googletest//:gtest_main",
         "@native_ui//:native_ui",
         "@video_codec//src/framework/public:video_codec",
     ],

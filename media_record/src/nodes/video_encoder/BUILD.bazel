@@ -1,6 +1,24 @@
 package(default_visibility = ["//visibility:public"])
 
+# Software RGBA->I420 converter (spec 002, T011).
+cc_library(
+    name = "rgba_i420",
+    srcs = ["rgba_i420.cc"],
+    hdrs = ["rgba_i420.h"],
+)
+
+# VideoEncoderNode (spec 002): software RGBA->I420 + video_codec VideoEncoder
+# (H.264, FFmpeg backend) in push mode into the "es_packets" stream buffer.
 cc_library(
     name = "video_encoder",
+    srcs = ["video_encoder_node.cc"],
+    hdrs = ["video_encoder_node.h"],
+    deps = [
+        ":rgba_i420",
+        "//src/framework/public:media_record",
+        "//src/framework/transport:transport",
+        "@video_codec//src/framework/public:video_codec",
+    ],
+    alwayslink = True,
     visibility = ["//visibility:public"],
 )

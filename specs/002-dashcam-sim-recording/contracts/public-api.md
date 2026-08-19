@@ -23,7 +23,7 @@ bazel run //src/examples:dashcam_record -- --help  # 用法
 ## 2. 节点数据通路（内部接口）
 
 ```cpp
-// src/framework/stream/packet.h（media_record 内部，非公共 umbrella）
+// src/framework/transport/packet.h（media_record 内部，非公共 umbrella）
 namespace media::record {
 class Packet;                        // 持有 VideoFrame / VideoPacket / SignalEvent
 class StreamBuffer;                  // 按流名的有界信箱
@@ -37,7 +37,7 @@ class PipelineRunner;                // 同步 frame loop 执行 PipelineConfig
 ## 3. 公共面不变式
 
 - `//src/framework/public:media_record`（umbrella + `Node` 骨架 + `NodeRegistry`）**保持不变**，本 feature 不修改公共头。
-- 新模块 `src/framework/stream/`、节点实现、示例、测试均以 `//` 前缀内部消费；三库仅经公共 umbrella 消费。
+- 新模块 `src/framework/transport/`、节点实现、示例、测试均以 `//` 前缀内部消费；三库仅经公共 umbrella 消费。
 
 ## 4. 验收
 

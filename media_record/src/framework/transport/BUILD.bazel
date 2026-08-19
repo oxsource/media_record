@@ -1,0 +1,32 @@
+package(default_visibility = ["//visibility:public"])
+
+# Frame-transport layer for the dashcam recording pipeline (spec 002).
+#
+# Packet (variant payload) + per-stream bounded StreamBuffer + the config-driven
+# synchronous PipelineRunner (contracts/pipeline-contract.md). The transport
+# carries video::codec::VideoFrame / VideoPacket (hence the video_codec public
+# umbrella dep) and consumes the 001 PipelineConfig loader for topology.
+#
+# NOTE: the module lives under src/framework/transport/ (NOT stream/) because
+# graph_runtime's public headers reference their own "src/framework/stream/
+# packet.h" by relative include; a same-named media_record path would shadow it
+# via the main-workspace include path and break the deps smoke test.
+cc_library(
+    name = "transport",
+    srcs = [
+        "pipeline_runner.cc",
+    ],
+    hdrs = [
+        "packet.h",
+        "pipeline_runner.h",
+        "recording_defaults.h",
+        "stream_buffer.h",
+        "stream_node.h",
+    ],
+    deps = [
+        "//src/framework/config:config",
+        "//src/framework/public:media_record",
+        "@video_codec//src/framework/public:video_codec",
+    ],
+    visibility = ["//visibility:public"],
+)

@@ -46,6 +46,22 @@ signals    ─ output:signals ──────────┐    overlay (vide
 
 **streams[]**：`front_frames`、`rear_frames`、`signals`、`view_frames`、`osd_frames`、`es_packets`、`clips`（7 条）。
 
+### 2.1 002 真实实现（dashcam-sim-recording）
+
+001 的占位节点在 002 中实现为可运行的 7 类节点，默认配置为单路 `dashcam_record.json`（1×StreamInput + SignalSource → MultiViewLayout → UiOverlay → VideoEncoder → Recorder → MuxerSink，6 条 stream）：
+
+| 节点 | 002 实现 |
+|------|----------|
+| `StreamInputNode` | `Image::FromFile` + `CopyPixels` 将默认图片解码为 RGBA；每 `Process` 产出一帧（真实时钟 + pts） |
+| `SignalSourceNode` | 每 `Process` 产出一个 `kTick` 旁路事件 |
+| `MultiViewLayoutNode` | native_ui flex 布局（`Container` + `ExternalImage`）确定结构；图像软件 blit 进自有 RGBA 帧（单视图，`f`/`r` 预留） |
+| `UiOverlayNode` | flex 布局把时间戳框锚定到右下角，软件位图字体（5×7）绘制真实时钟 `%Y-%m-%d %H:%M:%S`；`signal` 输入已消费（本期不渲染事件） |
+| `VideoEncoderNode` | 软件 RGBA→I420（内置转换）→ video_codec `VideoEncoder`（H.264，push 模式经 `PacketSink` 适配器入流） |
+| `RecorderNode` | 单会话单分段：帧计数、转发编码包，`Close` 时收敛会话 |
+| `MuxerSinkNode` | video_codec `Muxer`（非分片 MP4，moov 尾写）+ `FileByteSink` 临时文件 → 成功后原子 rename；失败删除临时文件（FR-009） |
+
+执行器为 `src/framework/transport/` 的 `PipelineRunner`（拓扑序 + 同步 frame loop + EOS drain + 逆拓扑 `Close`），入口为 `bazel run //src/examples:dashcam_record`（默认 10s @ 30fps → `out/dashcam.mp4`）。双摄 `recorder.json` 仍保持「配置校验通过 + `hello_graph` 占位运行」定位（8 nodes / 7 streams 断言不变）。
+
 ## 3. 推流 pipeline（stream.json）
 
 **连线**

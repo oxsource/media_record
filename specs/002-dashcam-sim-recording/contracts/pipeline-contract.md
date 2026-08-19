@@ -4,7 +4,7 @@
 
 ## 1. 运行模型
 
-`PipelineRunner`（`src/framework/stream/`）以**同步 frame loop** 执行配置图：
+`PipelineRunner`（`src/framework/transport/`）以**同步 frame loop** 执行配置图：
 
 1. 加载 + 校验 `PipelineConfig`（复用 001 `src/framework/config`）。
 2. `NodeRegistry::Create(type)` 实例化全部节点。

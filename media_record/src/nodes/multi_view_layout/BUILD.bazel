@@ -1,6 +1,17 @@
 package(default_visibility = ["//visibility:public"])
 
+# MultiViewLayoutNode (spec 002): single-view composition via native_ui flex
+# layout (Container + ExternalImage) + software blit into the RGBA frame.
 cc_library(
     name = "multi_view_layout",
+    srcs = ["multi_view_layout_node.cc"],
+    hdrs = ["multi_view_layout_node.h"],
+    deps = [
+        "//src/framework/public:media_record",
+        "//src/framework/transport:transport",
+        "@native_ui//:native_ui",
+        "@video_codec//src/framework/public:video_codec",
+    ],
+    alwayslink = True,
     visibility = ["//visibility:public"],
 )

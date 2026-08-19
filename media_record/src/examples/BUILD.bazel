@@ -21,3 +21,31 @@ cc_binary(
         "//:media_record",
     ],
 )
+
+# Dashcam recording entry (spec 002 / T020): loads dashcam_record.json and runs
+# the 7-node recorder pipeline for the default 10s @ 30fps -> out/dashcam.mp4.
+# All node libraries are linked (alwayslink) so their REGISTER_NODE registrations
+# are present for NodeRegistry::Create(type).
+cc_binary(
+    name = "dashcam_record",
+    srcs = ["dashcam_record.cc"],
+    data = [
+        "//src/examples/assets:assets",
+        "//src/examples/configs:configs",
+        "@ffmpeg//:ffmpeg_codec_archive",  # ADR-001: force-load FFmpeg (see video_codec backend BUILD)
+    ],
+    linkopts = ["-Wl,-force_load,$(execpath @ffmpeg//:ffmpeg_codec_archive)"],
+    deps = [
+        "//src/framework/config:config",
+        "//src/framework/public:media_record",
+        "//src/framework/transport:transport",
+        "//src/nodes/multi_view_layout:multi_view_layout",
+        "//src/nodes/muxer_sink:muxer_sink",
+        "//src/nodes/recorder:recorder",
+        "//src/nodes/signal_source:signal_source",
+        "//src/nodes/stream_input:stream_input",
+        "//src/nodes/ui_overlay:ui_overlay",
+        "//src/nodes/video_encoder:video_encoder",
+        "@native_ui//:native_ui",
+    ],
+)

@@ -1,6 +1,15 @@
 package(default_visibility = ["//visibility:public"])
 
+# SignalSourceNode (spec 002): emits bypass SignalEvents (kTick) per Process.
 cc_library(
     name = "signal_source",
+    srcs = ["signal_source_node.cc"],
+    hdrs = ["signal_source_node.h"],
+    deps = [
+        "//src/framework/public:media_record",
+        "//src/framework/transport:transport",
+        "@video_codec//src/framework/public:video_codec",
+    ],
+    alwayslink = True,
     visibility = ["//visibility:public"],
 )
