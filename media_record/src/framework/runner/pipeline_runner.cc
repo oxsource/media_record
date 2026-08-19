@@ -8,34 +8,9 @@
 #include "src/framework/node/graph_context.h"
 #include "src/framework/node/node_registry.h"
 #include "src/framework/public/types.h"
-#include "src/framework/runner/recording_defaults.h"
+#include "src/framework/runner/runner_state.h"
 
 namespace media::record {
-
-void ApplyRecordingOptions(graph::runtime::GraphConfig* config,
-                           const RecordingDefaults& d) {
-  for (graph::runtime::GraphConfig::NodeDef& def : config->nodes) {
-    if (def.type == "StreamInputNode") {
-      def.options.Set("image", d.input_image);
-      def.options.Set("width", d.width);
-      def.options.Set("height", d.height);
-      def.options.Set("fps", d.fps);
-      def.options.Set("frame_count", d.duration_seconds * d.fps);
-    } else if (def.type == "SignalSourceNode") {
-      def.options.Set("frame_count", d.duration_seconds * d.fps);
-    } else if (def.type == "UiOverlayNode") {
-      def.options.Set("format", d.timestamp_format);
-    } else if (def.type == "VideoEncoderNode") {
-      def.options.Set("fps", d.fps);
-      def.options.Set("bitrate", d.bitrate);
-    } else if (def.type == "MuxerSinkNode") {
-      def.options.Set("output", d.output_file);
-      def.options.Set("width", d.width);
-      def.options.Set("height", d.height);
-      def.options.Set("fps", d.fps);
-    }
-  }
-}
 
 namespace {
 
@@ -241,7 +216,7 @@ RunnerError PipelineRunner::Run() {
     }
   }
 
-  Defaults().pipeline_failed = false;
+  RunnerStateGlobal().pipeline_failed = false;
   stream_queues_.clear();
   done_streams_.clear();
 
@@ -314,7 +289,7 @@ RunnerError PipelineRunner::Run() {
     }
   }
 
-  if (!error.ok) Defaults().pipeline_failed = true;
+  if (!error.ok) RunnerStateGlobal().pipeline_failed = true;
 
   // Close every node in reverse topological order (cleanup always runs).
   {

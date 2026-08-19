@@ -81,6 +81,30 @@ TEST(PipelineConfigTest, DashcamRecordTopology) {
   EXPECT_EQ(config.nodes[1].type, "SignalSourceNode");
   EXPECT_EQ(config.nodes[6].type, "MuxerSinkNode");
 
+  // Node params are carried by each node's JSON "options" object and parsed
+  // into NodeDef.options by graph_runtime's JsonParser.
+  const std::string* image = config.nodes[0].options.Get<std::string>("image");
+  ASSERT_NE(image, nullptr);
+  EXPECT_EQ(*image, "src/examples/assets/dashcam_default.png");
+  const int* fps = config.nodes[0].options.Get<int>("fps");
+  ASSERT_NE(fps, nullptr);
+  EXPECT_EQ(*fps, 30);
+  const int* frame_count = config.nodes[0].options.Get<int>("frame_count");
+  ASSERT_NE(frame_count, nullptr);
+  EXPECT_EQ(*frame_count, 300);
+  const std::string* format = config.nodes[3].options.Get<std::string>("format");
+  ASSERT_NE(format, nullptr);
+  EXPECT_EQ(*format, "%Y-%m-%d %H:%M:%S");
+  const int* bitrate = config.nodes[4].options.Get<int>("bitrate");
+  ASSERT_NE(bitrate, nullptr);
+  EXPECT_EQ(*bitrate, 4000000);
+  const std::string* output = config.nodes[6].options.Get<std::string>("output");
+  ASSERT_NE(output, nullptr);
+  EXPECT_EQ(*output, "out/dashcam.mp4");
+  const int* muxer_width = config.nodes[6].options.Get<int>("width");
+  ASSERT_NE(muxer_width, nullptr);
+  EXPECT_EQ(*muxer_width, 1280);
+
   // 6 implicit streams (frames / signals / view_frames / osd_frames /
   // es_packets / clips) referenced via "port:stream".
   std::set<std::string> streams;

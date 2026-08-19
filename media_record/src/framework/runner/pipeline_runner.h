@@ -11,19 +11,20 @@
 
 #include "src/framework/config/graph_config.h"
 #include "src/framework/node/node.h"
-#include "src/framework/runner/recording_defaults.h"
+#include "src/framework/runner/runner_state.h"
 #include "src/framework/stream/packet.h"
 
 // Config-driven synchronous frame-loop driver over graph_runtime nodes
 // (spec 002 / contracts/pipeline-contract.md).
 //
 // Executes a graph::runtime::GraphConfig (parsed by graph_runtime's own
-// JsonParser) on the calling thread, following the same pattern as
-// graph_runtime's src/examples/string_pipeline.cc: each node is driven through
-// a GraphContext (Open / Process / Close) and packets are moved between nodes
-// by stream name via the shared shard queues. The graph_runtime GraphRuntime
-// executor class does NOT wire internal node-to-node streams, so this thin
-// driver is the execution path (contracts/dependency-contract.md D-6).
+// JsonParser — node params come from each node's JSON "options" object) on the
+// calling thread, following the same pattern as graph_runtime's
+// src/examples/string_pipeline.cc: each node is driven through a GraphContext
+// (Open / Process / Close) and packets are moved between nodes by stream name
+// via the shared shard queues. The graph_runtime GraphRuntime executor class
+// does NOT wire internal node-to-node streams, so this thin driver is the
+// execution path (contracts/dependency-contract.md D-6).
 //
 // Run sequence:
 //   1. Create every node via graph_runtime::NodeFactoryRegistry::CreateByName
@@ -44,13 +45,6 @@
 // name; MuxerSinkNode discards partial output when the run failed (FR-009).
 
 namespace media::record {
-
-// Fills each node's NodeOptions by node type from |d| (spec 002 / plan.md
-// "配置唯一性"): node params are PROGRAMMATIC runtime values injected by the
-// caller (CLI flags + defaults), not part of the GraphConfig JSON (graph_runtime
-// JsonParser does not parse per-node options).
-void ApplyRecordingOptions(graph::runtime::GraphConfig* config,
-                           const RecordingDefaults& d);
 
 struct RunnerError {
   bool ok = true;

@@ -21,9 +21,11 @@ framework/transport/ frame-transport layer); a thin sync driver in
 `src/framework/runner/` runs the graph on the calling thread via GraphContext
 Open/Process/Close + Packet routing (same pattern as graph_runtime's own
 src/examples/string_pipeline.cc — note GraphRuntime's executor class does NOT wire
-internal node-to-node streams). Node params (image/output/fps/duration) are injected
-programmatically into NodeDef.options by the entry (graph_runtime JsonParser ignores
-per-node options).
+internal node-to-node streams). Node params (image/output/fps/duration/bitrate/
+format) live in each node's "options" object of the config JSON and are parsed by
+graph_runtime's JsonParser into NodeDef.options; nodes read them into their own
+data structures (NodeOptions) at construction. Optional CLI flags
+(--image/--output/--frames) patch the matching node options on top of the config.
 
 Dependencies:
 - graph_runtime: /Users/moks/Develop/docker/ubuntu24/codes/graph_runtime/graph_runtime -> @graph_runtime//src/framework/public:runtime (Node/NodeRegistry/GraphContext/Packet/Timestamp/GraphConfig/ConfigValidator — full runtime public umbrella, same single-target dep as graph_runtime's own examples)

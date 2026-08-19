@@ -8,7 +8,7 @@
 #include "src/framework/node/node_contract.h"
 #include "src/framework/node/node_options.h"
 #include "src/framework/node/node_registry.h"
-#include "src/framework/runner/recording_defaults.h"
+#include "src/framework/runner/runner_state.h"
 #include "src/framework/stream/packet.h"
 
 namespace media::record {
@@ -106,7 +106,7 @@ absl::Status MuxerSinkNode::Close(graph::runtime::GraphContext&) {
   // Finalize only on a successful run: Finish() writes the trailer, then the
   // temp file is atomically renamed to the target. On failure (or a partial
   // run) the temp file is removed so no broken artifact remains (FR-009).
-  if (muxer_ && sink_ && !Defaults().pipeline_failed && !finished_) {
+  if (muxer_ && sink_ && !RunnerStateGlobal().pipeline_failed && !finished_) {
     finished_ = true;
     const video::codec::Status s = muxer_->Finish();
     if (s != video::codec::Status::kOk) {

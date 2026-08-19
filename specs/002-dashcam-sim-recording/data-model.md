@@ -62,12 +62,12 @@
 
 | 项 | 值 |
 |----|-----|
-| 配置类型 | `graph::runtime::GraphConfig`（graph_runtime 唯一配置模型；JSON 为其 schema，media_record 最小读取器产出该类型，不定义新 schema） |
+| 配置类型 | `graph::runtime::GraphConfig`（graph_runtime 唯一配置模型；JSON 为其 schema，由 graph_runtime `JsonParser` 解析，节点参数在每节点 `"options"` 对象，不定义新 schema） |
 | 节点 | 7 个实例（1×StreamInput + 1×SignalSource + Layout + Overlay + Encoder + Recorder + Muxer） |
-| 输入图片 | `src/examples/assets/dashcam_default.png`（入口 CLI/默认值注入 `NodeDef.options`） |
-| 分辨率 | 跟随输入图片 |
-| 时长 / 帧率 | 10s / 30fps（`frame_count = duration × fps`） |
-| 输出 | `out/dashcam.mp4`（入口 CLI/默认值注入） |
+| 输入图片 | `src/examples/assets/dashcam_default.png`（StreamInput 节点 options） |
+| 分辨率 | 1280×720（配置在 StreamInput / Muxer 节点 options） |
+| 时长 / 帧率 | 10s / 30fps（`frame_count = 300` 配置在 StreamInput / SignalSource 节点 options） |
+| 输出 | `out/dashcam.mp4`（MuxerSink 节点 options） |
 
 **校验规则**：节点名唯一、type 已注册、stream 引用合法、无环（复用 graph_runtime `ConfigValidator` 语义；`pipeline_config_test` 断言更新为 graph_runtime schema）。
 

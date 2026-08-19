@@ -3,11 +3,25 @@
     {
       "name": "cam_front",
       "type": "StreamInputNode",
+      "options": {
+        "image": "src/examples/assets/dashcam_default.png",
+        "width": 1280,
+        "height": 720,
+        "fps": 30,
+        "frame_count": 300
+      },
       "output_streams": ["output:front_frames"]
     },
     {
       "name": "cam_rear",
       "type": "StreamInputNode",
+      "options": {
+        "image": "src/examples/assets/dashcam_default.png",
+        "width": 1280,
+        "height": 720,
+        "fps": 30,
+        "frame_count": 300
+      },
       "output_streams": ["output:rear_frames"]
     },
     {

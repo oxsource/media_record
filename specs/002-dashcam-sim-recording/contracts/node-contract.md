@@ -23,7 +23,7 @@ recorder.json 引用的 7 类节点实现为**可运行的真实实现**（替�
 | 项 | 值 |
 |----|-----|
 | output | `output:frames` → `Packet<video::codec::VideoFrame>`（RGBA） |
-| options（程序化注入 `NodeDef.options`） | `image`（默认 `assets/dashcam_default.png`）、`width`/`height`（默认跟随图片）、`fps`（30）、`frame_count`（默认 300 = 10s×30fps） |
+| options（JSON `"options"` 对象 → `NodeDef::options`） | `image`（默认 `assets/dashcam_default.png`）、`width`/`height`（默认跟随图片）、`fps`（30）、`frame_count`（默认 300 = 10s×30fps） |
 | 行为 | `Open` 解码图片并校验；每 `Process` 产出一帧（复制图片 + 打真实时钟时间戳 + pts），达 `frame_count` 后返回 `StatusStop()` |
 | 失败 | 图片缺失 / 格式不支持 → 非 OK 状态，报错含路径 |
 
@@ -32,8 +32,8 @@ recorder.json 引用的 7 类节点实现为**可运行的真实实现**（替�
 | 项 | 值 |
 |----|-----|
 | output | `output:signals` → `Packet<SignalEvent>` |
-| options | 无（纯生成器；`kTick` 事件带真实时钟 `timestamp_us`） |
-| 行为 | 每 `Process` 产出一个最小 `SignalEvent`（`kTick`），旁路给 OSD；达帧数（与 StreamInput 相同的 `frame_count`，经 options 注入）后返回 `StatusStop()` |
+| options | `frame_count`（300，与 StreamInput 相同；JSON `"options"` 对象 → `NodeDef::options`） |
+| 行为 | 每 `Process` 产出一个最小 `SignalEvent`（`kTick`），旁路给 OSD；达帧数（与 StreamInput 相同的 `frame_count`，来自配置 options）后返回 `StatusStop()` |
 | 失败 | 无（纯生成器） |
 
 ### 3.3 MultiViewLayoutNode
@@ -51,7 +51,7 @@ recorder.json 引用的 7 类节点实现为**可运行的真实实现**（替�
 |----|-----|
 | input | `video:view_frames`、`signal:signals` |
 | output | `output:osd_frames` → `Packet<VideoFrame>`（RGBA） |
-| options | `format`（默认 `%Y-%m-%d %H:%M:%S`）、`position`（默认右下角） |
+| options（JSON `"options"` 对象） | `format`（默认 `%Y-%m-%d %H:%M:%S`）、`position`（默认右下角） |
 | 行为 | 以 native_ui flex 布局（`Container` + `Text`）计算时间戳位置，用软件位图字体在帧上绘制真实时钟时间戳（每帧取 `system_clock`）；时间戳叠加于画面固定角落（图片铺满整帧为底层）；事件输入本期不渲染（扩展点，消耗即丢弃） |
 | 失败 | 输入缺失 → 非 OK 状态，报错命名节点 |
 
@@ -61,7 +61,7 @@ recorder.json 引用的 7 类节点实现为**可运行的真实实现**（替�
 |----|-----|
 | input | `input:osd_frames` |
 | output | `output:es_packets` → `Packet<VideoPacket>`（Annex-B） |
-| options | `fps`（30）、`bitrate`（默认 4Mbps）、`width`/`height` |
+| options（JSON `"options"` 对象） | `fps`（30）、`bitrate`（默认 4Mbps）、`width`/`height` |
 | 行为 | 软件 RGBA→I420（media_record 内置）→ `CodecFactory::CreateVideo`（H.264, I420, 30fps）→ `Init` → 逐帧 pull 模式 `Encode` → 输入结束时 `Flush` |
 | 失败 | 编码器不可用 / 编码失败 → 非 OK 状态，命名节点 |
 
@@ -71,8 +71,7 @@ recorder.json 引用的 7 类节点实现为**可运行的真实实现**（替�
 |----|-----|
 | input | `input:es_packets` |
 | output | `output:clips` → `Packet<VideoPacket>`（透传） |
-| options | `duration_seconds`（10）、`fps`（30） |
-| 行为 | 会话生命周期（单会话单分段）：帧计数达标后触发 finalize；转发包给 muxer |
+| options | `duration_seconds`（10）、`fps`（30） || 行为 | 会话生命周期（单会话单分段）：帧计数达标后触发 finalize；转发包给 muxer |
 | 失败 | 会话异常 → 非 OK 状态 + 命名节点 |
 
 ### 3.7 MuxerSinkNode
@@ -80,7 +79,7 @@ recorder.json 引用的 7 类节点实现为**可运行的真实实现**（替�
 | 项 | 值 |
 |----|-----|
 | input | `input:clips` → `Packet<VideoPacket>` |
-| options | `output`（默认 `out/dashcam.mp4`） |
+| options（JSON `"options"` 对象） | `output`（默认 `out/dashcam.mp4`） |
 | 行为 | 用 video_codec 公共面 `Muxer`（`CodecFactory::CreateMuxer`，`MuxFormat::kMp4`）写 MP4：`SetOutput(FileByteSink)` 写临时文件 → 逐包 `Push` → `Finish` 写 trailer → 原子 rename；覆盖旧文件并提示 |
 | 失败 | 输出目录不可写 / muxer 失败 → 非 OK 状态，报错含路径 + 删除临时文件 + 退出非零（FR-009） |
 

@@ -10,7 +10,7 @@ bazel run //src/examples:dashcam_record -- --help  # 用法
 ```
 
 **行为**：
-- 加载默认单路配置 `dashcam_record.json`（graph_runtime schema）+ 默认图片，程序化注入节点参数（image/output/fps/duration），同步驱动器录制 300 帧，输出 `out/dashcam.mp4`。
+- 加载默认单路配置 `dashcam_record.json`（graph_runtime schema，节点参数在每节点 `"options"` 对象里），同步驱动器录制配置帧数（默认 300 = 10s×30fps），输出 `out/dashcam.mp4`。
 - 成功后退出码 0；失败打印可定位错误到 stderr，退出非零，不残留残缺文件。
 
 **退出码约定**：
@@ -30,7 +30,7 @@ class PipelineRunner;   // 同步 frame loop：GraphConfig 驱动 graph_runtime 
 ```
 
 - 7 类节点实现 **`graph::runtime::Node`**（graph_runtime 公共面类型），经 `GRAPH_RUNTIME_REGISTER_NODE` 注册到 graph_runtime `NodeFactoryRegistry`；帧数据为 `graph::runtime::Packet`（`video::codec::VideoFrame` / `VideoPacket` / `SignalEvent` 载荷）；由 `PipelineRunner` 实例化（`NodeFactoryRegistry::CreateByName(type, name, options)`）与编排（`GraphContext` Open/Process/Close + Packet 按流搬运）。
-- 配置唯一性：图拓扑只存于 graph_runtime `GraphConfig`（JSON 为其 schema）；节点参数由入口程序化设置 `NodeDef.options`。
+- 配置唯一性：图拓扑只存于 graph_runtime `GraphConfig`（JSON 为其 schema）；节点参数配置在每节点 `"options"` 对象里，经 graph_runtime `JsonParser` 解析进 `NodeDef::options`；可选 CLI 参数仅补丁对应节点 options。
 - **外部消费者**（Bazel 项目）仍只消费 `@media_record//:media_record`（公共 umbrella，见 001 `contracts/public-api.md`）；录制入口、节点实现与 `PipelineRunner` 为内部可执行/内部目标。
 
 ## 3. 公共面不变式

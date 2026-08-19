@@ -10,7 +10,7 @@
 
 以一张内置默认图片模拟摄像头输入，经「输入 → 布局 → OSD 叠加（真实时钟时间戳）→ H.264 编码 → 录制会话 → MP4 封装」的端到端录制闭环，输出可播放视频文件；默认录制 10 秒（30fps，共 300 帧）后自动结束。本期将 recorder.json 引用的 **7 类节点**（StreamInput / SignalSource / MultiViewLayout / UiOverlay / VideoEncoder / Recorder / MuxerSink）实现为**可运行的真实实现**（替换 001 的占位骨架），其余节点（音频编码 / 推流 / 预览）保持骨架。
 
-**执行模型 = graph_runtime 节点的同步 frame loop（对齐其 `src/examples/string_pipeline.cc` 模式）**：7 类节点实现为 `graph::runtime::Node` 子类，经 `GRAPH_RUNTIME_REGISTER_NODE` 注册；图拓扑由 **graph_runtime 自己的 `GraphConfig`（JSON schema，`"port:stream"` 命名）** 描述，media_record **不维护任何自有配置 schema**（删除 001 的 `src/framework/config` PipelineConfig，节点参数由入口程序化注入 `NodeDef.options`）；帧传输统一 **graph_runtime 的 `Packet` / `Timestamp` / `GraphContext`** 类型（不再有 media_record 自有 Packet/StreamBuffer/StreamNode/transport 层）。media_record 仅新增一个薄驱动器 `src/framework/runner/`：在调用线程上按拓扑序构造 `GraphContext` 驱动各节点 `Open/Process/Close`，并按 stream 名在节点间搬运 `Packet`（与 string_pipeline.cc 的手工搬运同构，改为配置驱动）。
+**执行模型 = graph_runtime 节点的同步 frame loop（对齐其 `src/examples/string_pipeline.cc` 模式）**：7 类节点实现为 `graph::runtime::Node` 子类，经 `GRAPH_RUNTIME_REGISTER_NODE` 注册；图拓扑由 **graph_runtime 自己的 `GraphConfig`（JSON schema，`"port:stream"` 命名）** 描述，media_record **不维护任何自有配置 schema**（删除 001 的 `src/framework/config` PipelineConfig；节点参数配置在 JSON 每节点 `"options"` 对象里，由 graph_runtime `JsonParser` 解析进 `NodeDef::options`）；帧传输统一 **graph_runtime 的 `Packet` / `Timestamp` / `GraphContext`** 类型（不再有 media_record 自有 Packet/StreamBuffer/StreamNode/transport 层）。media_record 仅新增一个薄驱动器 `src/framework/runner/`：在调用线程上按拓扑序构造 `GraphContext` 驱动各节点 `Open/Process/Close`，并按 stream 名在节点间搬运 `Packet`（与 string_pipeline.cc 的手工搬运同构，改为配置驱动）。
 
 **关键约束**：graph_runtime 的 `GraphRuntime` 执行类**不连接节点内部流**（`OutputStreamManager::AddMirror` 从未被调用；其公共面示例均为单节点图 + 外部注入），因此本图由 media_record 的同步驱动器执行，不依赖 `GraphRuntime::Schedule/Start`。编码复用 video_codec 公共面 `VideoEncoder`（H.264，FFmpeg backend），MP4 封装复用 video_codec 公共面 `Muxer`（经 `ByteSink`/`FileByteSink` 落盘）；画面组合使用 native_ui flex 布局（`Container` + `ExternalImage` + `Text`）确定结构与位置，最终图像与时间戳文字由 media_record 软件绘制进自有 RGBA 帧（host Surface 无像素回读）。media_record 自身不再引入 skia / ffmpeg / libyuv，RGBA→I420 以内置软件转换实现。默认输出 `out/dashcam.mp4`，覆盖旧文件并提示；失败给出可定位错误且不残留残缺产物。
 
@@ -41,7 +41,7 @@
 - 时间戳为**真实时钟**（显示录制时刻的真实日期时间），随录制逐帧自然递增。
 - 失败（输入缺失 / 格式不支持 / 输出不可写 / 编码失败）→ 可定位错误 + 退出非零 + 不残留残缺文件。
 - 仅消费三库的**公共 umbrella 头文件**（graph_runtime 经 `@graph_runtime//src/framework/public:runtime` 一个 target 获得节点/配置/类型全部能力，内部头经传递依赖可见，与 graph_runtime 自身 examples 一致）；video_codec 公共 umbrella 本期做**最小前置扩展**（导出 io 的 `ByteSink` / `FileByteSink`，跨仓协作），media_record 自身不直接引入 skia / ffmpeg / libyuv。
-- **配置唯一性**：图拓扑只存于 graph_runtime `GraphConfig`（JSON 文件为 graph_runtime schema；media_record 的最小 JSON 读取器只负责产出该类型，不定义新 schema）；节点参数（image/output/fps/duration）由入口程序化设置 `NodeDef.options`（graph_runtime JsonParser 不解析 node options）。
+- **配置唯一性**：图拓扑只存于 graph_runtime `GraphConfig`（JSON 文件为 graph_runtime schema，由 graph_runtime `JsonParser` 解析）；节点参数（image/output/fps/frame_count/bitrate/format）配置在 JSON 每节点 `"options"` 对象里，`JsonParser` 解析进 `NodeDef::options`；可选 CLI 仅补丁对应节点 options。
 
 **Scale/Scope**: 单 workspace（`media_record/media_record/`）；7 类节点真实实现（graph_runtime 节点）+ 同步驱动器 + 录制入口示例 + 测试 + `make verify` 扩展。
 
@@ -107,7 +107,7 @@ media_record/                              (repo root)
     │   │   │   ├── stream.json / preview.json  (不变)
     │   │   │   └── dashcam_record.json    (本期新增：单路可运行默认配置，graph_runtime JSON schema)
     │   │   ├── hello_graph.cc             (不变：001 骨架示例，仍用 media_record 占位节点跑 recorder.json)
-    │   │   └── dashcam_record.cc          (本期新增：录制入口——解析 GraphConfig JSON + 程序化注入节点参数 + 同步驱动器)
+    │   │   └── dashcam_record.cc          (本期新增：录制入口——解析 GraphConfig JSON（含每节点 options）+ 同步驱动器)
     │   └── tests/
     │       ├── BUILD.bazel
     │       ├── pipeline_config_test.cc    (扩展：dashcam_record.json 以 graph_runtime GraphConfig 校验清单)
@@ -118,7 +118,7 @@ media_record/                              (repo root)
     └── doc/architecture/                  (更新 pipelines.md 的记录仪运行拓扑)
 ```
 
-**Structure Decision**: 在 001 既有骨架内做**增量实现**，但**不新增帧传输层**：数据通路直接复用 graph_runtime 的 `Node` / `GraphContext` / `Packet` / `Timestamp` 类型（消费其公共 umbrella `@graph_runtime//src/framework/public:runtime`，与 graph_runtime 自身 `src/examples/*` 的用法一致）；media_record 只新增 `src/framework/runner/` 一个薄驱动器，在调用线程上按图拓扑驱动各节点并搬运 Packet（对齐 `string_pipeline.cc` 的手工 GraphContext 驱动模式）。7 个节点目录由「空 BUILD + 占位头」升级为「真实 cc_library + graph::runtime::Node 实现」，命名与 target 命名沿用 001 约定；录制入口与默认配置放 `src/examples/`，端到端测试放 `src/tests/`。配置**只用 graph_runtime 的 `GraphConfig`**（JSON 文件为其 schema；media_record 的最小 JSON 读取器仅产出 `GraphConfig` 类型，不定义新 schema；节点参数由入口程序化设置 `NodeDef.options`）。公共 target（`//src/framework/public:media_record`）保持 header-only 不变（001 骨架），7 类节点不再经其注册——经 `GRAPH_RUNTIME_REGISTER_NODE` 注册到 graph_runtime 的 `NodeFactoryRegistry`，跨库链接由节点库 / 示例 / 测试承担（延续 001 决策）。MP4 封装复用 video_codec 公共面 `Muxer` + `FileByteSink`；为此需在 video_codec 公共 umbrella 增加 io 导出（`ByteSink` / `FileByteSink`，public BUILD deps + io 可见性 + dist 头文件拷贝）作为**前置跨仓任务**（见 `contracts/dependency-contract.md` D-1）。**命名避让**：media_record 不得在 `src/framework/stream/`、`src/framework/config/`（graph_runtime 同名目录）下放置文件，避免主 workspace include 遮蔽 graph_runtime 内部头（T004 deps_smoke_test 验证）。
+**Structure Decision**: 在 001 既有骨架内做**增量实现**，但**不新增帧传输层**：数据通路直接复用 graph_runtime 的 `Node` / `GraphContext` / `Packet` / `Timestamp` 类型（消费其公共 umbrella `@graph_runtime//src/framework/public:runtime`，与 graph_runtime 自身 `src/examples/*` 的用法一致）；media_record 只新增 `src/framework/runner/` 一个薄驱动器，在调用线程上按图拓扑驱动各节点并搬运 Packet（对齐 `string_pipeline.cc` 的手工 GraphContext 驱动模式）。7 个节点目录由「空 BUILD + 占位头」升级为「真实 cc_library + graph::runtime::Node 实现」，命名与 target 命名沿用 001 约定；录制入口与默认配置放 `src/examples/`，端到端测试放 `src/tests/`。配置**只用 graph_runtime 的 `GraphConfig`**（JSON 文件为其 schema，由 graph_runtime `JsonParser` 解析；节点参数配置在 JSON 每节点 `"options"` 对象里，不定义新 schema）。公共 target（`//src/framework/public:media_record`）保持 header-only 不变（001 骨架），7 类节点不再经其注册——经 `GRAPH_RUNTIME_REGISTER_NODE` 注册到 graph_runtime 的 `NodeFactoryRegistry`，跨库链接由节点库 / 示例 / 测试承担（延续 001 决策）。MP4 封装复用 video_codec 公共面 `Muxer` + `FileByteSink`；为此需在 video_codec 公共 umbrella 增加 io 导出（`ByteSink` / `FileByteSink`，public BUILD deps + io 可见性 + dist 头文件拷贝）作为**前置跨仓任务**（见 `contracts/dependency-contract.md` D-1）。**命名避让**：media_record 不得在 `src/framework/stream/`、`src/framework/config/`（graph_runtime 同名目录）下放置文件，避免主 workspace include 遮蔽 graph_runtime 内部头（T004 deps_smoke_test 验证）。
 
 ## Complexity Tracking
 

@@ -2,10 +2,14 @@
 //
 //   bazel run //src/examples:dashcam_record
 //
-// Loads the default single-cam config (dashcam_record.json, graph_runtime
-// JSON schema), injects node params (image/output/fps/duration) programmatically
-// into GraphConfig::NodeDef::options, and runs the recorder pipeline through the
-// sync driver (src/framework/runner) for the default 10s at 30fps, writing
+// Loads the default single-cam config (dashcam_record.json, graph_runtime JSON
+// schema). Node params (image/output/fps/frame_count/bitrate/format) live in
+// each node's "options" object of the config file — graph_runtime's own
+// JsonParser turns them into GraphConfig::NodeDef::options, and each node stores
+// them in its own config data structure (NodeOptions) at construction. Optional
+// CLI flags (--image/--output/--frames) patch the matching node options on top
+// of the config. The sync driver (src/framework/runner) then runs the recorder
+// pipeline for the configured frame budget (default 300 = 10s at 30fps), writing
 // out/dashcam.mp4. Overwrites an existing output with a log notice; any failure
 // prints a locatable error to stderr and exits non-zero without leaving a
 // partial artifact (FR-008/009).
@@ -21,7 +25,6 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
-#include "native_ui/render.h"
 #include "src/framework/config/config_validator.h"
 #include "src/framework/config/json/json_parser.h"
 #include "src/framework/node/node_registry.h"
@@ -33,7 +36,8 @@ void PrintUsage(const char* argv0) {
   std::printf(
       "usage: %s [--config=FILE] [--image=FILE] [--output=FILE] [--frames=N]\n"
       "  default run: 10s @ 30fps from src/examples/configs/dashcam_record.json\n"
-      "  with src/examples/assets/dashcam_default.png -> out/dashcam.mp4\n",
+      "  (node params come from each node's JSON 'options' object)\n"
+      "  -> out/dashcam.mp4\n",
       argv0);
 }
 
@@ -56,19 +60,51 @@ bool MkdirParents(const std::string& path) {
   return true;
 }
 
+// Patches a node option for every node of the given type (CLI overrides).
+void SetNodeOption(graph::runtime::GraphConfig* config,
+                   const std::string& type, const std::string& key,
+                   const std::string& value) {
+  for (graph::runtime::GraphConfig::NodeDef& def : config->nodes) {
+    if (def.type == type) def.options.Set(key, value);
+  }
+}
+
+void SetNodeOption(graph::runtime::GraphConfig* config,
+                   const std::string& type, const std::string& key, int value) {
+  for (graph::runtime::GraphConfig::NodeDef& def : config->nodes) {
+    if (def.type == type) def.options.Set(key, value);
+  }
+}
+
+// Reads a string option from the first node of the given type (config default).
+const std::string* GetNodeOptionString(const graph::runtime::GraphConfig& config,
+                                       const std::string& type,
+                                       const std::string& key) {
+  for (const graph::runtime::GraphConfig::NodeDef& def : config.nodes) {
+    if (def.type == type) return def.options.Get<std::string>(key);
+  }
+  return nullptr;
+}
+
+// Reads an int option from the first node of the given type (config default).
+const int* GetNodeOptionInt(const graph::runtime::GraphConfig& config,
+                            const std::string& type, const std::string& key) {
+  for (const graph::runtime::GraphConfig::NodeDef& def : config.nodes) {
+    if (def.type == type) return def.options.Get<int>(key);
+  }
+  return nullptr;
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
-  using media::record::ApplyRecordingOptions;
-  using media::record::Defaults;
   using media::record::PipelineRunner;
-  using media::record::RecordingDefaults;
   using media::record::RunnerError;
 
   std::string config_path = "src/examples/configs/dashcam_record.json";
-  std::string image_path = "src/examples/assets/dashcam_default.png";
-  std::string output_path = "out/dashcam.mp4";
-  int frames_override = -1;
+  std::string image_override;   // empty = keep the config value
+  std::string output_override;  // empty = keep the config value
+  int frames_override = -1;     // < 0 = keep the config frame budget
 
   for (int i = 1; i < argc; ++i) {
     const std::string arg = argv[i];
@@ -83,9 +119,9 @@ int main(int argc, char** argv) {
     if (!cfg.empty()) {
       config_path = cfg;
     } else if (!img.empty()) {
-      image_path = img;
+      image_override = img;
     } else if (!out.empty()) {
-      output_path = out;
+      output_override = out;
     } else if (!fr.empty()) {
       frames_override = std::atoi(fr.c_str());
     } else {
@@ -94,10 +130,6 @@ int main(int argc, char** argv) {
       return 2;
     }
   }
-
-  RecordingDefaults& d = Defaults();
-  d.input_image = image_path;
-  d.output_file = output_path;
 
   // `bazel run` executes with cwd = the target's runfiles copy of the workspace
   // root, so relative paths (config/image/out/) would land in the build tree.
@@ -110,27 +142,8 @@ int main(int argc, char** argv) {
     }
   }
 
-  // Resolve input-image dimensions for the muxer stream metadata (FR: default
-  // resolution follows the input image).
-  {
-    std::unique_ptr<native::ui::Image> image =
-        native::ui::Image::FromFile(image_path.c_str());
-    if (!image) {
-      std::fprintf(stderr, "error: cannot decode default input image: '%s'\n",
-                   image_path.c_str());
-      return 1;
-    }
-    d.width = image->width();
-    d.height = image->height();
-  }
-
-  if (!MkdirParents(output_path)) {
-    std::fprintf(stderr, "error: cannot create output directory for '%s'\n",
-                 output_path.c_str());
-    return 1;
-  }
-
-  // Parse the pipeline template with graph_runtime's own JSON parser.
+  // Parse the pipeline config with graph_runtime's own JSON parser. Node params
+  // are carried by each node's "options" object and land in NodeDef.options.
   graph::runtime::JsonParser parser;
   auto parsed = parser.Parse(config_path);
   if (!parsed.ok()) {
@@ -152,21 +165,43 @@ int main(int argc, char** argv) {
     }
   }
 
-  // Node params are programmatic (CLI/defaults), not part of the config JSON.
-  ApplyRecordingOptions(&config, d);
+  // Optional CLI overrides patch the matching node options.
+  if (!image_override.empty()) {
+    SetNodeOption(&config, "StreamInputNode", "image", image_override);
+  }
+  if (!output_override.empty()) {
+    SetNodeOption(&config, "MuxerSinkNode", "output", output_override);
+  }
+  if (frames_override > 0) {
+    SetNodeOption(&config, "StreamInputNode", "frame_count", frames_override);
+    SetNodeOption(&config, "SignalSourceNode", "frame_count", frames_override);
+  }
 
-  const int frames = frames_override > 0 ? frames_override
-                                         : d.duration_seconds * d.fps;
+  // Resolve the recording budget and pacing from the config node options.
+  const int* frame_count_opt = GetNodeOptionInt(config, "StreamInputNode", "frame_count");
+  const int frame_count = frames_override > 0 ? frames_override
+                                              : (frame_count_opt ? *frame_count_opt : 300);
+  const int* fps_opt = GetNodeOptionInt(config, "StreamInputNode", "fps");
+  const int fps = fps_opt ? *fps_opt : 30;
   // Pace ~30fps so the default 10s recording takes ~10s wall clock.
-  const int64_t frame_interval_us = frames_override > 0 ? 0 : 1000000LL / d.fps;
-  PipelineRunner runner(config, frames, frame_interval_us);
+  const int64_t frame_interval_us = frames_override > 0 ? 0 : 1000000LL / fps;
+
+  const std::string* output_opt = GetNodeOptionString(config, "MuxerSinkNode", "output");
+  const std::string output_path = output_opt ? *output_opt : "out/dashcam.mp4";
+  if (!MkdirParents(output_path)) {
+    std::fprintf(stderr, "error: cannot create output directory for '%s'\n",
+                 output_path.c_str());
+    return 1;
+  }
+
+  PipelineRunner runner(std::move(config), frame_count, frame_interval_us);
   RunnerError run = runner.Run();
   if (!run.ok) {
     std::fprintf(stderr, "error: %s\n", run.message.c_str());
     return 1;
   }
 
-  std::printf("[dashcam_record] recorded %d frames -> %s\n", frames,
+  std::printf("[dashcam_record] recorded %d frames -> %s\n", frame_count,
               output_path.c_str());
   return 0;
 }

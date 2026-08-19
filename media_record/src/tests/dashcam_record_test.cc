@@ -1,7 +1,8 @@
 // End-to-end recording test (spec 002, T021) + failure-path tests (T027).
 //
 // Drives the full 7-node recorder pipeline (graph_runtime nodes) with the real
-// dashcam_record.json topology (graph_runtime JSON schema) but a short 2s /
+// dashcam_record.json topology (graph_runtime JSON schema; node params come from
+// each node's JSON "options" object, parsed into NodeDef.options) but a short
 // 60-frame budget and a temp output file, then asserts a playable MP4 was
 // produced (ftyp/moov/mdat present, non-trivial size, no leftover temp file).
 // The failure tests verify that missing input, unwritable output, and an
@@ -18,10 +19,8 @@
 #include <zlib.h>
 
 #include "gtest/gtest.h"
-#include "native_ui/render.h"
 #include "src/framework/config/json/json_parser.h"
 #include "src/framework/runner/pipeline_runner.h"
-#include "src/framework/runner/recording_defaults.h"
 
 namespace media::record {
 namespace {
@@ -66,22 +65,22 @@ bool HasBytes(const std::string& path, const char* magic, size_t len) {
   return false;
 }
 
-// Resets the process-wide defaults and sets the common success-path values.
-// Node options are injected into the GraphConfig by ApplyRecordingOptions
-// (params are programmatic, not part of the config JSON).
-void SetDefaults(const std::string& image, const std::string& output,
-                 int duration_seconds = 2) {
-  RecordingDefaults& d = Defaults();
-  d = RecordingDefaults();  // reset to built-in defaults
-  d.input_image = image;
-  d.output_file = output;
-  d.duration_seconds = duration_seconds;
-  d.fps = 30;
-  std::unique_ptr<native::ui::Image> img =
-      native::ui::Image::FromFile(image.c_str());
-  ASSERT_NE(img, nullptr) << "cannot decode input image: " << image;
-  d.width = img->width();
-  d.height = img->height();
+// Patches a node option for every node of the given type. Params live in the
+// config JSON's per-node "options" object; tests override the values that must
+// differ per scenario (temp output path, short frame budget, failure inputs).
+void PatchNodeOption(graph::runtime::GraphConfig* config,
+                     const std::string& type, const std::string& key,
+                     const std::string& value) {
+  for (auto& def : config->nodes) {
+    if (def.type == type) def.options.Set(key, value);
+  }
+}
+
+void PatchNodeOption(graph::runtime::GraphConfig* config,
+                     const std::string& type, const std::string& key, int value) {
+  for (auto& def : config->nodes) {
+    if (def.type == type) def.options.Set(key, value);
+  }
 }
 
 graph::runtime::GraphConfig LoadConfig() {
@@ -143,14 +142,26 @@ std::string WritePng(const std::string& path, int w, int h) {
   return path;
 }
 
+// Applies the common test scenario overrides on top of the config JSON values:
+// the runfiles-resolved input image, a temp output file, and a short frame
+// budget (sources + runner bound).
+void ApplyScenario(graph::runtime::GraphConfig* config,
+                   const std::string& image, const std::string& output,
+                   int frames) {
+  PatchNodeOption(config, "StreamInputNode", "image", image);
+  PatchNodeOption(config, "StreamInputNode", "frame_count", frames);
+  PatchNodeOption(config, "SignalSourceNode", "frame_count", frames);
+  PatchNodeOption(config, "MuxerSinkNode", "output", output);
+}
+
 TEST(DashcamRecordTest, RecordsPlayableMp4) {
   const std::string output = TempPath("dashcam_record_test.mp4");
   std::remove(output.c_str());
   std::remove((output + ".tmp").c_str());
-  SetDefaults(Runfile("src/examples/assets/dashcam_default.png"), output);
 
   graph::runtime::GraphConfig config = LoadConfig();
-  ApplyRecordingOptions(&config, Defaults());
+  ApplyScenario(&config, Runfile("src/examples/assets/dashcam_default.png"),
+                output, /*frames=*/60);
   PipelineRunner runner(std::move(config), 60);
   RunnerError run = runner.Run();
   ASSERT_TRUE(run.ok) << run.message;
@@ -172,16 +183,10 @@ TEST(DashcamRecordTest, RecordsPlayableMp4) {
 TEST(DashcamRecordTest, MissingInputImageFailsWithPath) {
   const std::string output = TempPath("dashcam_missing_input.mp4");
   const std::string missing = "/nonexistent_dir_xyz/dashcam_default.png";
-  RecordingDefaults& d = Defaults();
-  d = RecordingDefaults();
-  d.input_image = missing;
-  d.output_file = output;
-  d.duration_seconds = 2;
-  d.fps = 30;
   std::remove(output.c_str());
 
   graph::runtime::GraphConfig config = LoadConfig();
-  ApplyRecordingOptions(&config, d);
+  ApplyScenario(&config, missing, output, /*frames=*/60);
   PipelineRunner runner(std::move(config), 60);
   RunnerError run = runner.Run();
   ASSERT_FALSE(run.ok);
@@ -194,10 +199,10 @@ TEST(DashcamRecordTest, MissingInputImageFailsWithPath) {
 TEST(DashcamRecordTest, UnwritableOutputFailsWithPath) {
   const std::string output =
       "/nonexistent_dir_xyz/out/sub/dashcam.mp4";  // parent does not exist
-  SetDefaults(Runfile("src/examples/assets/dashcam_default.png"), output);
 
   graph::runtime::GraphConfig config = LoadConfig();
-  ApplyRecordingOptions(&config, Defaults());
+  ApplyScenario(&config, Runfile("src/examples/assets/dashcam_default.png"),
+                output, /*frames=*/60);
   PipelineRunner runner(std::move(config), 60);
   RunnerError run = runner.Run();
   ASSERT_FALSE(run.ok);
@@ -213,12 +218,17 @@ TEST(DashcamRecordTest, EncodeFailureLeavesNoPartialArtifact) {
   // rejects it), exercising the encode-failure path deterministically.
   const std::string output = TempPath("dashcam_encode_fail.mp4");
   const std::string odd_image = WritePng(TempPath("odd5.png"), 5, 5);
-  SetDefaults(odd_image, output);
   std::remove(output.c_str());
   std::remove((output + ".tmp").c_str());
 
   graph::runtime::GraphConfig config = LoadConfig();
-  ApplyRecordingOptions(&config, Defaults());
+  ApplyScenario(&config, odd_image, output, /*frames=*/60);
+  // Force the odd frame dimensions through the whole pipeline: the default
+  // config carries 1280x720, so the odd 5x5 source image must be padded too.
+  PatchNodeOption(&config, "StreamInputNode", "width", 5);
+  PatchNodeOption(&config, "StreamInputNode", "height", 5);
+  PatchNodeOption(&config, "MuxerSinkNode", "width", 5);
+  PatchNodeOption(&config, "MuxerSinkNode", "height", 5);
   PipelineRunner runner(std::move(config), 60);
   RunnerError run = runner.Run();
   ASSERT_FALSE(run.ok);

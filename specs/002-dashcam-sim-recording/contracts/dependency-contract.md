@@ -13,8 +13,9 @@
 ## 2. 配置唯一性（不维护第二份配置）
 
 - 图拓扑**只存于 graph_runtime 的 `GraphConfig`**；JSON 配置文件（`dashcam_record.json` / `recorder.json` 等）采用 graph_runtime JSON schema（`nodes[]` + `input_streams`/`output_streams`，`"port:stream"` 命名，无独立 `streams[]` 段）。
-- **解析只用 graph_runtime 的 `JsonParser`**（`@graph_runtime//src/framework/config/json:json_parser`，经 graph_runtime 公共 `runtime` target 导出，媒体 `JsonParser` 可见性放开、纳入公共面——同 video_codec `io` 导出先例）。media_record **不维护任何自有 JSON 读取器**；入口/测试统一 `graph::runtime::JsonParser::Parse(path)` → `GraphConfig`，错误语义（缺文件 / JSON 语法 / 缺 `type`）即 graph_runtime 原样报错。`JsonParser` **不解析 per-node `options`**，因此：
-  - 节点参数（`image` / `output` / `fps` / `duration` 等）不入 JSON，由录制入口程序化设置 `GraphConfig::NodeDef::options`（CLI 参数 + 默认值），对齐 `add_packet_demo` 的程序化建图方式。
+- **解析只用 graph_runtime 的 `JsonParser`**（`@graph_runtime//src/framework/config/json:json_parser`，经 graph_runtime 公共 `runtime` target 导出，媒体 `JsonParser` 可见性放开、纳入公共面——同 video_codec `io` 导出先例）。media_record **不维护任何自有 JSON 读取器**；入口/测试统一 `graph::runtime::JsonParser::Parse(path)` → `GraphConfig`，错误语义（缺文件 / JSON 语法 / 缺 `type`）即 graph_runtime 原样报错。`JsonParser` **解析每节点 `"options"` 对象**（标量类型映射：string → `std::string`、bool → `bool`、整数 → `int`、浮点 → `double`；非标量报错），因此：
+  - 节点参数（`image` / `output` / `fps` / `frame_count` / `bitrate` / `format` 等）**配置在 JSON 每节点的 `"options"` 里**，由 `JsonParser` 解析进 `GraphConfig::NodeDef::options`；节点构造时读入各自的数据结构（`NodeOptions` / 成员变量）。
+  - 可选 CLI 参数（`--image` / `--output` / `--frames`）只**补丁匹配节点的 options**（`def.options.Set(...)`），不改配置 schema。
 - 001 的 `src/framework/config`（`PipelineConfig` + 校验器）**本期删除**，不再存在 media_record 自有配置模型。
 
 ## 3. vendored 依赖（media_record 不再直接消费）
@@ -31,7 +32,7 @@ media_record pipeline **不直接链接** `@ffmpeg` / `@libyuv`（不引入 skia
 | D-4 | `Muxer::SetOutput(ByteSink*)` 为公共接口；`Muxer` 输出经 `FileByteSink` 写临时文件，成功后原子 rename 落盘（FR-009） |
 | D-5 | native_ui host `Surface` 无公共像素回读（`CreateFromBuffer` Android-only stub）→ 画面像素由 media_record 软件绘制（flex 布局定位 + 位图字体） |
 | D-6 | graph_runtime `GraphRuntime` 执行类不连接节点内部流（`AddMirror` 无调用点）→ 本图由 media_record `PipelineRunner`（`src/framework/runner/`）在调用线程上按拓扑序驱动 `GraphContext` + 手工搬运 `Packet` 执行（对齐 `string_pipeline.cc` 模式） |
-| D-7 | **解析复用 graph_runtime `JsonParser`**（经公共 `runtime` target 导出，media_record 不再有自有 JSON 读取器）；节点参数程序化注入 `NodeDef.options` |
+| D-7 | **解析复用 graph_runtime `JsonParser`**（经公共 `runtime` target 导出，media_record 不再有自有 JSON 读取器）；`JsonParser` 解析每节点 `"options"` 对象为 `NodeDef.options`（标量类型映射），节点参数配置在 JSON 里；可选 CLI 仅补丁对应节点 options |
 | D-8 | 路径可覆盖沿用 001：`media_record_deps.bzl` 常量 / `.user.bazelrc` |
 | D-9 | **命名避让**：media_record 不得在 `src/framework/stream/`、`src/framework/config/` 下放置文件（graph_runtime 同名目录会被主 workspace include 遮蔽） |
 

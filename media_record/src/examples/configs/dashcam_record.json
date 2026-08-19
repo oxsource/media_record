@@ -3,11 +3,21 @@
     {
       "name": "input",
       "type": "StreamInputNode",
+      "options": {
+        "image": "src/examples/assets/dashcam_default.png",
+        "width": 1280,
+        "height": 720,
+        "fps": 30,
+        "frame_count": 300
+      },
       "output_streams": ["output:frames"]
     },
     {
       "name": "signals",
       "type": "SignalSourceNode",
+      "options": {
+        "frame_count": 300
+      },
       "output_streams": ["output:signals"]
     },
     {
@@ -19,12 +29,19 @@
     {
       "name": "overlay",
       "type": "UiOverlayNode",
+      "options": {
+        "format": "%Y-%m-%d %H:%M:%S"
+      },
       "input_streams": ["video:view_frames", "signal:signals"],
       "output_streams": ["output:osd_frames"]
     },
     {
       "name": "encoder",
       "type": "VideoEncoderNode",
+      "options": {
+        "fps": 30,
+        "bitrate": 4000000
+      },
       "input_streams": ["input:osd_frames"],
       "output_streams": ["output:es_packets"]
     },
@@ -37,6 +54,12 @@
     {
       "name": "muxer",
       "type": "MuxerSinkNode",
+      "options": {
+        "output": "out/dashcam.mp4",
+        "width": 1280,
+        "height": 720,
+        "fps": 30
+      },
       "input_streams": ["input:clips"]
     }
   ]

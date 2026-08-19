@@ -6,8 +6,8 @@
 
 `PipelineRunner`（`src/framework/runner/`）以**同步 frame loop** 在调用线程上执行 graph_runtime 节点图（对齐 graph_runtime `src/examples/string_pipeline.cc` 的手工 `GraphContext` 驱动模式，改为配置驱动）：
 
-1. 加载 + 校验 graph_runtime `GraphConfig`（JSON 采用 graph_runtime schema，由 media_record 最小读取器解析；复用 `ConfigValidator` 语义）。
-2. `NodeFactoryRegistry::CreateByName(type, name, options)` 实例化全部节点（`options` 由入口程序化注入）。
+1. 加载 + 校验 graph_runtime `GraphConfig`（JSON 采用 graph_runtime schema，由 graph_runtime `JsonParser` 解析，节点 `"options"` 对象进入 `NodeDef::options`；复用 `ConfigValidator` 语义）。
+2. `NodeFactoryRegistry::CreateByName(type, name, options)` 实例化全部节点（`options` 来自配置 JSON，节点构造时读入自己的数据结构）。
 3. 按 stream 名（`"port:stream"` 冒号后的部分）建立流路由：每个节点 `output_streams` 声明 `port:stream`，下游 `input_streams` 引用同名 stream。
 4. 逐帧驱动：先 `Open()` 全部节点（拓扑序）；每帧按拓扑序 `Process()`——source 节点产包 → 包按 stream 路由进入下游输入 shard → 下游节点消费/产出；source 返回 `StatusStop()` 后标记结束；达 `frame_count`（300）或全部 source 结束 → 标记流结束（EOS）并 drain（节点在输入结束 + 空时 flush/finalize，如 encoder `Flush`、recorder finalize、muxer trailer + rename）→ 逆拓扑序 `Close()` 全部节点。
 5. 首错中止：任一节点返回非 OK 状态 → 中止 run 并返回可定位错误（含节点名 + 原因）。
@@ -23,7 +23,7 @@
 | stream | `src/examples/configs/stream.json` | 配置校验通过 | 编码→推流（后续） |
 | preview | `src/examples/configs/preview.json` | 配置校验通过 | 复合画面→屏幕（后续） |
 
-模板 JSON 均为 **graph_runtime schema**（`nodes[]` + `input_streams`/`output_streams`，`"port:stream"` 命名，无独立 `streams[]` 段；不再有 per-node `options` 字段——参数由入口程序化注入）。
+模板 JSON 均为 **graph_runtime schema**（`nodes[]` + `input_streams`/`output_streams`，`"port:stream"` 命名，无独立 `streams[]` 段；节点参数配置在每节点 `"options"` 对象里，由 graph_runtime `JsonParser` 解析进 `NodeDef::options`）。
 
 ## 3. dashcam_record.json 拓扑（默认）
 
