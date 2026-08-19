@@ -93,6 +93,15 @@ absl::Status DashcamRenderNode::Close(graph::runtime::GraphContext&) {
 }
 
 absl::Status DashcamRenderNode::Process(graph::runtime::GraphContext& ctx) {
+  // NOTE — graph termination origin: DashcamRenderNode is the sole self-driven
+  // source node in this pipeline. Once the configured frame budget
+  // (`frame_count_`) is exhausted, returning StatusStop() is what terminates
+  // the ENTIRE graph: the runtime treats a source node's Stop as the pipeline
+  // completion signal, then propagates `done` downstream and drains all
+  // remaining queued packets (encoder -> recorder -> muxer) before closing
+  // every node. No other node initiates shutdown — this early-return is the
+  // single place the recording actually ends. (See specs/002
+  // contracts/dependency-contract.md D-6.)
   if (frame_index_ >= frame_count_) {
     return graph::runtime::StatusStop();
   }
