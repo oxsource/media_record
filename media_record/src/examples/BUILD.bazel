@@ -24,10 +24,20 @@ cc_binary(
     data = [
         "//src/examples/assets:assets",
         "//src/examples/configs:configs",
-        "@ffmpeg//:ffmpeg_codec_archive",  # ADR-001: force-load FFmpeg (see video_codec backend BUILD)
-    ],
-    linkopts = ["-Wl,-force_load,$(execpath @ffmpeg//:ffmpeg_codec_archive)"],
+    ] + select({
+        # Android (spec 003): MediaCodec backend, no FFmpeg archive on device.
+        "//platforms:android_arm64": [],
+        # ADR-001: force-load FFmpeg on host (see video_codec backend BUILD).
+        "//conditions:default": ["@ffmpeg//:ffmpeg_codec_archive"],
+    }),
+    linkopts = select({
+        "//platforms:android_arm64": [],
+        "//conditions:default": [
+            "-Wl,-force_load,$(execpath @ffmpeg//:ffmpeg_codec_archive)",
+        ],
+    }),
     deps = [
+        "//src/framework/lifecycle:lifecycle",
         "//src/nodes/dashcam_render:dashcam_render",
         "//src/nodes/muxer_sink:muxer_sink",
         "//src/nodes/recorder:recorder",

@@ -22,6 +22,8 @@
 #include "graph_runtime/json_parser.h"
 #include "graph_runtime/runtime.h"
 
+#include "src/framework/lifecycle/lifecycle_context.h"
+
 namespace media::record {
 namespace {
 
@@ -39,12 +41,12 @@ RunnerError RunRuntime(graph::runtime::GraphConfig config) {
   absl::Status status = runtime.Initialize(config);
   if (!status.ok()) return RunnerError{false, status.ToString()};
 
-  bool pipeline_failed = false;
-  absl::Status sp_status = runtime.SetInputSidePacket("pipeline_failed", graph::runtime::Packet::MakePacket<bool*>(&pipeline_failed));
+  media::record::LifecycleContext lifecycle_ctx;
+  absl::Status sp_status = runtime.SetInputSidePacket(media::record::LifecycleContext::kSidePacketTag, graph::runtime::Packet::MakePacket<media::record::LifecycleContext*>(&lifecycle_ctx));
   if (!sp_status.ok()) return RunnerError{false, sp_status.ToString()};
   std::string execution_error;
   runtime.SetErrorCallback([&](const absl::Status& s) {
-    pipeline_failed = true;
+    lifecycle_ctx.pipeline_failed = true;
     if (execution_error.empty()) execution_error = s.ToString();
   });
 

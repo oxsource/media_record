@@ -202,9 +202,11 @@ bool DashcamRenderer::DrawFrame(native::ui::Canvas& canvas, int frame_index,
 // CPU path — only the render target differs. After drawing we flush the GPU
 // work and present (SwapBuffers) so the encoder receives the frame zero-copy.
 //
-// NOTE: true zero-copy AHWB->GPU background import (Surface::CreateFromBuffer
-// with RenderBackend::kGPU) is a later optimization; for now the GPU backend
-// uploads the raster background image via Skia (correct, non zero-copy).
+// NOTE: the background is drawn from the raster image (GPU backend uploads it
+// via Skia — correct, non zero-copy). Using an AHardwareBuffer-backed
+// ExternalImage for the background (to simulate camera image data) is deferred
+// to a later iteration (spec 003 follow-up); this keeps the shared DrawFrame
+// path intact for both platforms.
 bool DashcamRenderer::Render(int frame_index, const std::string& timestamp,
                              native::ui::RenderContext* ctx) {
   if (!ctx_ || !ctx || !ctx->gr) return false;

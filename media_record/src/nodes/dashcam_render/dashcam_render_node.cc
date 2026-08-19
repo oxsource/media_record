@@ -10,8 +10,13 @@
 #include "absl/status/statusor.h"
 #include "graph_runtime/node_registry.h"
 #include "graph_runtime/runtime.h"
+#include "src/framework/lifecycle/lifecycle_context.h"
 #include "src/render/dashcam_renderer.h"
 #include "video_codec/video_codec.h"
+
+#if defined(__ANDROID__)
+#include "native_ui/render_context.h"
+#endif
 
 namespace media {
 namespace record {
@@ -50,12 +55,16 @@ DashcamRenderNode::DashcamRenderNode(const std::string& name,
   if (const int* v = options.Get<int>("height")) height_ = *v;
   if (const int* v = options.Get<int>("fps")) fps_ = *v;
   if (const int* v = options.Get<int>("frame_count")) frame_count_ = *v;
+  if (const bool* v = options.Get<bool>("input_surface")) surface_mode_ = *v;
   if (fps_ <= 0) fps_ = 30;
   if (frame_count_ <= 0) frame_count_ = 300;
 }
 
+// The output stream carries a CPU VideoFrame (host) OR a PacketNotify
+// (Android surface mode) — declared SetAny() so both route through the same
+// port; Process() branches on surface_mode_.
 absl::Status DashcamRenderNode::GetContract(graph::runtime::NodeContract* c) {
-  c->Outputs().Get("output").Set<video::codec::VideoFrame>();
+  c->Outputs().Get("output").SetAny();
   return absl::OkStatus();
 }
 
@@ -65,6 +74,16 @@ absl::Status DashcamRenderNode::Open(graph::runtime::GraphContext&) {
         "dashcam_render: 'background' and 'dog' image paths are required "
         "(NodeOptions)");
   }
+#if defined(__ANDROID__)
+  if (surface_mode_) {
+    // Surface mode: renderer + RenderContext are built lazily on first
+    // Process() (the encoder's input surface is written to LifecycleContext
+    // during the encoder's Open, which completes before any source Process).
+    frame_index_ = 0;
+    pacing_start_us_ = NowUs();
+    return absl::OkStatus();
+  }
+#endif
   renderer_ = render::DashcamRenderer::Create(
       background_path_, car_path_, width_, height_);
   if (!renderer_) {
@@ -86,6 +105,45 @@ absl::Status DashcamRenderNode::Open(graph::runtime::GraphContext&) {
   pacing_start_us_ = NowUs();
   return absl::OkStatus();
 }
+
+#if defined(__ANDROID__)
+// Surface mode: lazily (first Process) acquire the encoder input surface from
+// the shared LifecycleContext, host a RenderContext on it, and build the
+// surface-mode DashcamRenderer. Called once; subsequent frames reuse the setup.
+absl::Status DashcamRenderNode::EnsureSurfaceRenderer(
+    graph::runtime::GraphContext& ctx) {
+  if (surface_renderer_) return absl::OkStatus();
+
+  const graph::runtime::Packet sp =
+      ctx.InputSidePackets().Get(media::record::LifecycleContext::kSidePacketTag);
+  void* input_surface = nullptr;
+  if (!sp.IsEmpty()) {
+    auto lc = sp.Get<media::record::LifecycleContext*>();
+    if (lc.ok() && lc.value()) input_surface = lc.value()->input_surface;
+  }
+  if (!input_surface) {
+    return absl::InternalError(
+        "dashcam_render: encoder input surface not ready (LifecycleContext "
+        "'input_surface')");
+  }
+
+  render_ctx_ = native::ui::RenderContext::CreateFromNativeWindow(
+      input_surface, width_, height_);
+  if (!render_ctx_) {
+    return absl::InternalError(
+        "dashcam_render: RenderContext::CreateFromNativeWindow failed");
+  }
+  surface_renderer_ = render::DashcamRenderer::Create(
+      background_path_, car_path_, width_, height_);
+  if (!surface_renderer_) {
+    return absl::InvalidArgumentError(
+        "dashcam_render: failed to load/scale background/dog images "
+        "(background='" +
+        background_path_ + "', dog='" + car_path_ + "')");
+  }
+  return absl::OkStatus();
+}
+#endif
 
 absl::Status DashcamRenderNode::Close(graph::runtime::GraphContext&) {
   renderer_.reset();
@@ -111,17 +169,41 @@ absl::Status DashcamRenderNode::Process(graph::runtime::GraphContext& ctx) {
   const int64_t target_us =
       pacing_start_us_ + frame_index_ * 1000000LL / fps_;
   if (target_us > now_us) {
-    std::this_thread::sleep_for(
-        std::chrono::microseconds(target_us - now_us));
+    std::this_thread::sleep_for(std::chrono::microseconds(target_us - now_us));
   }
+
+  const std::string timestamp = FormatTimestamp(timestamp_format_);
+  const int64_t pts = frame_index_ * 1000000LL / fps_;
+
+#if defined(__ANDROID__)
+  if (surface_mode_) {
+    // Android/surface mode: lazily build the surface renderer (reads the
+    // encoder input surface from LifecycleContext), compose directly onto the
+    // encoder input surface (GPU), then notify the encoder to Poll(). No CPU
+    // VideoFrame is produced (spec 003: nodes don't exchange CPU frames here).
+    absl::Status status = EnsureSurfaceRenderer(ctx);
+    if (!status.ok()) return status;
+    if (!surface_renderer_->Render(frame_index_, timestamp,
+                                   render_ctx_.get())) {
+      return absl::InternalError(
+          "dashcam_render: surface DashcamRenderer::Render failed");
+    }
+    media::record::PacketNotify notify;
+    notify.timestamp_us = NowUs();
+    auto pkt = graph::runtime::Packet::MakePacket<media::record::PacketNotify>(
+                   std::move(notify))
+                   .At(graph::runtime::Timestamp(pts));
+    ctx.Outputs().Get("output").AddPacket(std::move(pkt));
+    ++frame_index_;
+    return absl::OkStatus();
+  }
+#endif
 
   // Compose one dashcam frame into the external-owned buffer (zero-copy via
   // Surface::CreateFromPixels). We then copy into the VideoFrame's own plane
   // because VideoFrame owns its pixel data.
-  const std::string timestamp = FormatTimestamp(timestamp_format_);
   if (!renderer_->Render(frame_index_, timestamp, frame_)) {
-    return absl::InternalError(
-        "dashcam_render: DashcamRenderer::Render failed");
+    return absl::InternalError("dashcam_render: DashcamRenderer::Render failed");
   }
 
   video::codec::VideoFrame frame;
@@ -132,7 +214,6 @@ absl::Status DashcamRenderNode::Process(graph::runtime::GraphContext& ctx) {
   frame.planes[0] = frame_.data;
   frame.timestamp_us = NowUs();
 
-  const int64_t pts = frame_index_ * 1000000LL / fps_;
   auto pkt = graph::runtime::Packet::MakePacket<video::codec::VideoFrame>(
                  std::move(frame))
                  .At(graph::runtime::Timestamp(pts));

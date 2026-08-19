@@ -4,7 +4,7 @@
 
 ## 概览
 
-按平台分支把 Dashcam 渲染 + 编码管线适配到 Android：背景图走 AHWB + Surface GPU 零拷贝导入（ExternalImage 保持 CPU/仅 SetBuffer），编码走 MediaCodec backend + CreateInputSurface。host（CPU RGBA）路径保持不变。
+按平台分支把 Dashcam 渲染 + 编码管线适配到 Android：渲染器提供双渲染目标（host CPU PixelBuffer / Android encoder input surface），背景图复用现有 `DrawImage`（GPU 后端上传），编码走 MediaCodec backend + CreateInputSurface（`ExternalImage` 保持 CPU/仅 SetBuffer）。host（CPU RGBA）路径保持不变。
 
 涉及仓库与改动粒度：
 
@@ -42,35 +42,45 @@
 
 **验收**：`ExternalImage` 保持原样（仅 SetBuffer/CPU），无回归；GPU 导入能力由 Surface 层提供。
 
-### Phase 2: media_record — 渲染器平台分支
+### Phase 2: media_record — 渲染器平台分支（渲染目标抽象）
+
+**定位**：Phase 2 交付**渲染层的平台分支能力**——`DashcamRenderer` 提供两种渲染目标（CPU PixelBuffer / GPU input-surface），供 Phase 3 的节点平台分支使用。Phase 3 的 `DashcamRenderNode` surface 分支调用 `DashcamRenderer::Render(frame_index, ts, RenderContext*)`，因此 Phase 2 必须先于 Phase 3。
 
 - [x] **native_ui 前置**：导出 `render_context.h` 到 public umbrella（新增 `include/native_ui/render_context.h` 转发头）——media_record 需访问 `RenderContext`（`SwapBuffers`）以交付编码器。
 - [x] `DashcamRenderer` 新增 Android surface 渲染路径 `Render(frame_index, ts, RenderContext*)`（`#ifdef __ANDROID__`）：
   - host：保持 `Surface::CreateFromPixels(buffer)` CPU 路径。
   - Android：`Surface::Create(ctx)`（FBO 0，encoder input surface）+ `Surface::Flush()` + `ctx->SwapBuffers()` 交付编码器；小狗/时间戳逻辑复用现有实现。
-- [ ] 背景 GPU 零拷贝导入（Phase 2b，需导出 `ahwb.h`）：背景写入 AHWB → `Surface::CreateFromBuffer(hb, kGPU, ctx)` 经 `ToGpuImage` 零拷贝导入。当前用 GPU 后端上传 CPU 背景图（正确、非零拷贝），零拷贝作为后续优化。
-- [ ] 按 encoder native stride 对齐渲染尺寸（16/256，在节点/runner 层配置）。
+- [x] **逻辑复用**：抽取 `DrawFrame(canvas, ...)` 共享场景绘制（背景 + 小狗 + 时间戳），CPU/Android 两条路径仅"获得 canvas 方式"不同，其余逻辑完全一致（背景经现有 `DrawImage` 绘制）。
 
-**验收**：同一渲染内容，host 走 CPU，Android 走 surface，逻辑复用；host 编译无回归。
+**验收**：同一渲染内容，host 走 CPU，Android 走 surface，逻辑复用；host 编译无回归。渲染器层能力就绪，供 Phase 3 节点接线调用。
 
 ### Phase 3: media_record — LifecycleContext + 节点接线
 
-- [ ] 定义 `LifecycleContext` 结构体（`pipeline_failed` + `input_surface`，可扩展共享 `RenderContext`），runner（dashcam_record.cc）持有并经 `SetInputSidePacket("lifecycle_ctx", MakePacket<LifecycleContext*>(&ctx))` 注入。
-- [ ] `VideoEncoderNode` 暴露 `CreateInputSurface()`（surface 模式下返回 `ANativeWindow*`，否则 nullptr）；`Open` 成功创建 input surface 后写 `ctx_->input_surface`。
-- [ ] `DashcamRenderNode` 改为**首次 `Process` 惰性创建 renderer**：读 `ctx_->input_surface` → `RenderContext::CreateFromNativeWindow` + `Surface::Create(ctx)` 建渲染目标 → 创建 `DashcamRenderer`（Android surface 分支）。
-- [ ] `MuxerSinkNode::Close` 改读 `ctx_->pipeline_failed`（迁移自独立 `bool*` 侧边包，行为不变）。
-- [ ] 每帧：绘制 → 共享 `RenderContext` 的 `gr->flush()` → `SwapBuffers()` → encoder `Poll()`。
-- [ ] 若 `ctx_->input_surface` 为 null（非 surface 模式 / 创建失败），返回可定位错误（不绘制空指针）。
+- [x] 定义 `LifecycleContext`（`pipeline_failed` + `input_surface`）+ `PacketNotify` 通用通知类型，放 `src/framework/lifecycle/`（header-only target `//src/framework/lifecycle:lifecycle`）。runner（dashcam_record.cc）持有并经 `SetInputSidePacket("lifecycle_ctx", MakePacket<LifecycleContext*>(&ctx))` 注入；host 上 `pipeline_failed` 从独立 `bool*` 侧边包迁移为 `LifecycleContext` 字段（行为不变）。
+- [x] `VideoEncoderNode` 平台分支：构造函数读 `input_surface`/`width`/`height`；Android surface 模式 `Open` 调 `EnsureSurfaceEncoder`（`cfg.input_surface=true`，创建 encoder，`CreateInputSurface()` 写入 `LifecycleContext::input_surface`）；`Process` 收 `PacketNotify` → `encoder_->Poll()`。host 走原 CPU RGBA→I420→Encode 路径。GetContract 输入改 `SetAny()`（VideoFrame / PacketNotify）。
+- [x] `DashcamRenderNode` 平台分支：Android surface 模式 `Open` 不分配 CPU buffer；首次 `Process` 调 `EnsureSurfaceRenderer`（读 `input_surface` → `RenderContext::CreateFromNativeWindow` + `DashcamRenderer`），每帧 `Render(frame_index, ts, render_ctx_)` 渲染到 input surface 并输出 `PacketNotify`。host 走原 CPU PixelBuffer 路径。GetContract 输出改 `SetAny()`。
+- [x] `MuxerSinkNode::Close` 改读 `LifecycleContext::pipeline_failed`（迁移自独立 `bool*` 侧边包，行为不变）。
+- [x] 每帧：绘制 → `Surface::Flush()` + `ctx->SwapBuffers()` → encoder `Poll()`（封装在 renderer `Render(ctx)` 与 encoder `Process`）。
+- [x] `input_surface` 为 null（非 surface 模式 / 创建失败）：`EnsureSurfaceRenderer` 返回可定位错误，不绘制空指针。
 
-**验收**：DashcamRenderNode 在 Android surface 模式下通过 `LifecycleContext` 拿到 encoder input surface，渲染到该 surface，编码输出正确；host 路径无回归，`pipeline_failed` 语义不变。
+**验收**：DashcamRenderNode 在 Android surface 模式下通过 `LifecycleContext` 拿到 encoder input surface，渲染到该 surface（GPU，无 CPU VideoFrame 流转），encoder `Poll` 编码；host 路径无回归，`pipeline_failed` 语义不变。
 
-### Phase 4: Android demo + 验证
+### Phase 4: dashcam_record.cc 改造为多端统一入口 + 验证
 
-- [ ] 新增 Android 端到端 demo（仿 `external_image_demo`）：PNG 背景 → AHWB → ExternalImage → encoder input surface 渲染 → MediaCodec 编码 → MP4。
-- [ ] 新增/复用 Android 构建配置与脚本（`--config=android_arm64`）。
-- [ ] host 上 `make verify` 全绿（原路径无回归）。
+**方向**（2026-08-19 确认）：不在 `dashcam_record.cc` 之外另建独立 Android demo，而是**改造 `dashcam_record.cc` 为多端统一入口**，按平台分支：
 
-**验收**：Android 设备/模拟器产出可播放 H.264 MP4，host 验证全绿。
+- host（默认）：现有 CPU 渲染路径 + encoder（软件编码）→ MP4，行为不变。
+- Android（`__ANDROID__` / `--surface`）：走 surface 模式——`LifecycleContext` 注入（`pipeline_failed` + `input_surface`）→ `VideoEncoderNode::Open` 写 `input_surface` → `DashcamRenderNode` 首次 `Process` lazy 获取 → `RenderContext` 渲染到 encoder input surface → MediaCodec 编码 → MP4。
+
+实施项：
+- [x] `dashcam_record.cc` 基础改造（Phase 3 已完成）：定义并注入 `LifecycleContext`（`SetInputSidePacket(kSidePacketTag, ...)`），`pipeline_failed` 从独立 `bool*` 侧边包迁移为 `LifecycleContext` 字段（行为不变）。Android 的 `input_surface` 由 encoder 节点 Open 写入、render 节点惰性读取（节点平台分支已在 Phase 3 实现）。
+- [x] **config 从外部传入**：`dashcam_record.cc` 不按平台硬编码默认 config——统一默认 host config（`dashcam_record.json`），`--config=FILE` 显式传入（Android 端显式传 android config）。
+- [x] **Android /data/local 测试路径 config** `dashcam_record_android.json`：encoder 加 `input_surface=true` + `width`/`height`，render 加 `input_surface=true`（输出 PacketNotify 而非 VideoFrame）；asset/output 路径指向 `/data/local/tmp/media_record/`（设备测试布局，脚本 push 保持该结构）。
+- [x] **Android 构建配置**：`.bazelrc` `--config=android_arm64`（rules_android_ndk toolchain + `//platforms:android_arm64_platform`，与 native_ui/video_codec 对齐）；`WORKSPACE` 补齐 NDK 注册（`rules_android_ndk` http_archive + `android_ndk_repository(name = "androidndk")`，镜像 video_codec 的 WORKSPACE，NDK 路径取自 `ANDROID_NDK_HOME`，host 构建不受影响）。
+- [x] **Android 一键验证 target**（`mk/android.mk` + `scripts/verify/android_dashcam.sh`，对齐 video_codec 的 android 模块）：`android-build`（跨编译）/ `android-push`（push 二进制 + 图片 + android config 到 `/data/local/tmp/media_record/`）/ `android-run`（设备上跑 surface 模式）/ `android-verify`（+ pull MP4 到 `out/` + ffprobe/decode 校验）。
+- [ ] 实测验证：host 上 `make verify` 全绿（原路径无回归）；连接 Android 设备/模拟器跑 `make android-verify` 验证 surface 路径产出 H.264 MP4。
+
+**验收**：同一 `dashcam_record.cc` 入口——host 跑 CPU 路径产出 MP4（无回归），Android 跑 surface 路径经 MediaCodec 产出可播放 H.264 MP4。多端统一入口，不另建 demo。
 
 ## 风险缓解
 
@@ -80,5 +90,5 @@
 
 ## 交付物
 
-- 代码改动：media_record 渲染/节点分支 + Android demo（native_ui 无改动）。
-- Android 端到端 demo + host `make verify` 验证记录。
+- 代码改动：media_record 渲染/节点分支 + `dashcam_record.cc` 多端统一入口（host CPU / Android surface），native_ui 仅导出 `render_context.h` 转发头。
+- 多端验证记录：host `make verify` 全绿 + Android 设备/模拟器产出 H.264 MP4。

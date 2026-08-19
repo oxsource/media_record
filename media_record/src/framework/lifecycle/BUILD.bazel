@@ -1,0 +1,9 @@
+package(default_visibility = ["//visibility:public"])
+
+# Graph-lifetime shared context + Android surface-mode notification types
+# (spec 003). Header-only; shared by the dashcam nodes and the runner entry.
+cc_library(
+    name = "lifecycle",
+    hdrs = ["lifecycle_context.h"],
+    visibility = ["//visibility:public"],
+)

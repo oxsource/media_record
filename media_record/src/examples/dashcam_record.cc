@@ -16,9 +16,10 @@
 // WaitUntilDone (blocks until the source node exhausts its frame budget) →
 // Shutdown. It writes out/dashcam.mp4, overwriting an existing output with a
 // log notice; any failure prints a locatable error to stderr and exits non-zero
-// without leaving a partial artifact (FR-008/009). A local pipeline_failed flag
-// is handed to sink nodes as a side packet so MuxerSinkNode::Close discards
-// partial output on failure (FR-009).
+// without leaving a partial artifact (FR-008/009). A local LifecycleContext
+// (holding pipeline_failed +, on Android, the encoder input surface) is handed
+// to nodes as a side packet so MuxerSinkNode::Close discards partial output on
+// failure (FR-009) and the render node can lazily acquire the encoder surface.
 //
 // Exit codes: 0 success; 1 runtime failure (input/output/encode/mux);
 //            2 argument error.
@@ -36,12 +37,17 @@
 #include "graph_runtime/node_registry.h"
 #include "graph_runtime/runtime.h"
 
+#include "src/framework/lifecycle/lifecycle_context.h"
+
 namespace {
 
 void PrintUsage(const char* argv0) {
   std::printf(
       "usage: %s [--config=FILE] [--output=FILE] [--frames=N]\n"
-      "  default run: 10s @ 30fps from src/examples/configs/dashcam_record.json\n"
+      "  pipeline config is passed in from outside (--config=FILE);\n"
+      "  default: src/examples/configs/dashcam_record.json (host CPU pipeline)\n"
+      "  Android surface mode (MediaCodec):\n"
+      "    --config=src/examples/configs/dashcam_record_android.json\n"
       "  (background/car assets + node params come from the JSON 'options')\n"
       "  -> out/dashcam.mp4\n",
       argv0);
@@ -69,6 +75,9 @@ bool MkdirParents(const std::string& path) {
 }  // namespace
 
 int main(int argc, char** argv) {
+  // The pipeline config is passed in from outside (--config=); the default is
+  // the host CPU config. Android (surface mode, /data/local test layout) must
+  // pass --config=src/examples/configs/dashcam_record_android.json explicitly.
   std::string config_path = "src/examples/configs/dashcam_record.json";
   std::string output_override;  // empty = keep the config value
   int frames_override = -1;     // < 0 = keep the config frame budget
@@ -160,12 +169,15 @@ int main(int argc, char** argv) {
     return 1;
   }
 
-  // A local failure flag, handed to sink nodes as a side packet so
-  // MuxerSinkNode::Close discards partial output on a failed run (FR-009).
-  bool pipeline_failed = false;
-  absl::Status sp_status = runtime.SetInputSidePacket("pipeline_failed", graph::runtime::Packet::MakePacket<bool*>(&pipeline_failed));
+  // Graph-lifetime shared context, injected as a side packet POINTER so nodes
+  // can read/write its fields at runtime (no Open-order race). MuxerSinkNode
+  // reads pipeline_failed to discard partial output on a failed run (FR-009);
+  // on Android, VideoEncoderNode writes input_surface and DashcamRenderNode
+  // lazily reads it. See specs/003 contracts §4.2.
+  media::record::LifecycleContext lifecycle_ctx;
+  absl::Status sp_status = runtime.SetInputSidePacket(media::record::LifecycleContext::kSidePacketTag, graph::runtime::Packet::MakePacket<media::record::LifecycleContext*>(&lifecycle_ctx));
   if (!sp_status.ok()) {
-    std::fprintf(stderr, "error: cannot set pipeline_failed side packet: %s\n", sp_status.ToString().c_str());
+    std::fprintf(stderr, "error: cannot set lifecycle_ctx side packet: %s\n", sp_status.ToString().c_str());
     return 1;
   }
 
@@ -173,19 +185,19 @@ int main(int argc, char** argv) {
   // nodes are closed, so the partial artifact is dropped.
   std::string execution_error;
   runtime.SetErrorCallback([&](const absl::Status& s) {
-    pipeline_failed = true;
+    lifecycle_ctx.pipeline_failed = true;
     if (execution_error.empty()) execution_error = s.ToString();
   });
 
   status = runtime.Start();
   if (!status.ok()) {
-    pipeline_failed = true;
+    lifecycle_ctx.pipeline_failed = true;
     std::fprintf(stderr, "error: %s\n", status.ToString().c_str());
     return 1;
   }
   status = runtime.WaitUntilDone();
   if (!status.ok() || runtime.HasError()) {
-    pipeline_failed = true;
+    lifecycle_ctx.pipeline_failed = true;
     std::string msg;
     if (!execution_error.empty()) {
       // A node failed during execution: surface the locatable error.

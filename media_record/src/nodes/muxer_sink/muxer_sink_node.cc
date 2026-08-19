@@ -10,6 +10,8 @@
 #include "graph_runtime/node_registry.h"
 #include "graph_runtime/packet.h"
 
+#include "src/framework/lifecycle/lifecycle_context.h"
+
 namespace media::record {
 
 namespace {
@@ -106,15 +108,17 @@ absl::Status MuxerSinkNode::Close(graph::runtime::GraphContext& ctx) {
   // temp file is atomically renamed to the target. On failure (or a partial
   // run) the temp file is removed so no broken artifact remains (FR-009).
   //
-  // The failure flag is delivered as a side packet holding a bool* to the
-  // runner's local pipeline_failed (set by the graph error callback). Read it
-  // back here instead of touching a process-global.
+  // The failure flag lives in the runner-owned LifecycleContext, delivered as a
+  // side packet holding a LifecycleContext* (set by the graph error callback).
+  // Read it back here instead of touching a process-global. See specs/003
+  // contracts §4.2.
   bool pipeline_failed = false;
   const graph::runtime::Packet sp =
-      ctx.InputSidePackets().Get("pipeline_failed");
+      ctx.InputSidePackets().Get(media::record::LifecycleContext::kSidePacketTag);
   if (!sp.IsEmpty()) {
-    auto pf = sp.Get<bool*>();
-    if (pf.ok() && pf.value() != nullptr) pipeline_failed = *pf.value();
+    auto lc = sp.Get<media::record::LifecycleContext*>();
+    if (lc.ok() && lc.value() != nullptr)
+      pipeline_failed = lc.value()->pipeline_failed;
   }
   if (muxer_ && sink_ && !pipeline_failed && !finished_) {
     finished_ = true;

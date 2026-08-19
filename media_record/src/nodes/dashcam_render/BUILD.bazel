@@ -10,6 +10,7 @@ cc_library(
     srcs = ["dashcam_render_node.cc"],
     hdrs = ["dashcam_render_node.h"],
     deps = [
+        "//src/framework/lifecycle:lifecycle",
         "//src/render:render",
         "@graph_runtime//src/framework/public:runtime",
         "@video_codec//src/framework/public:video_codec",

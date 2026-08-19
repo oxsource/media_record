@@ -16,6 +16,7 @@
 - Q: native_ui `ExternalImage` 当前硬编码 kCPU（无 GPU 零拷贝路径），如何支持 Android surface 模式？ → A: 见下条最终澄清。
 - Q: `DashcamRenderer` 当前是纯 CPU RGBA（`Surface::CreateFromPixels` 零拷贝到外部 PixelBuffer），Android surface 模式如何处理双路径？ → A: 按平台分支——Android 采用新的创建范式（在 encoder 的 `CreateInputSurface` 上创建 RenderContext + Surface），否则保留默认 `Surface::CreateFromPixels`。
 - Q: GPU 零拷贝导入应归属哪一层？ → A: **GPU 不是 ExternalImage 的关注点**——`ExternalImage` 仅支持 `SetBuffer(HardwareBuffer)` 创建（CPU 加载），GPU 导入已由 **Surface 抽象** 支持（`Surface::Create(ctx)` + `Image::FromBuffer(kGPU)` + `RenderContext`）。背景图 GPU 导入由 `DashcamRenderer` 在 Android surface 模式处理（基于 Surface/RenderContext），`ExternalImage` 保持原样。
+- Q: surface 模式下节点间如何传递数据？ → A: **不是 CPU 数据流转**（参考 `video_codec` examples 的 surface 路径）。MediaCodec surface 模式下，render 节点直接渲染到 encoder 的 `CreateInputSurface`（GPU 零拷贝），然后发轻量 `PacketNotify`（通用通知，时间戳）给 encoder，encoder 收到后 `Poll()` 泵输出。render→encoder 的流携带 `PacketNotify` 而非 `VideoFrame`；节点按 `surface_mode_` 运行时分支，端口用 `SetAny()` 声明。
 
 ## User Scenarios & Testing *(mandatory)*
 

@@ -17,6 +17,7 @@ cc_library(
     hdrs = ["video_encoder_node.h"],
     deps = [
         ":rgba_i420",
+        "//src/framework/lifecycle:lifecycle",
         "@graph_runtime//src/framework/public:runtime",
         "@video_codec//src/framework/public:video_codec",
     ],

@@ -7,15 +7,26 @@
 #include "graph_runtime/node.h"
 #include "video_codec/video_codec.h"
 
+#if defined(__ANDROID__)
+#include "src/framework/lifecycle/lifecycle_context.h"
+#endif
+
 // VideoEncoderNode (spec 002): H.264 encodes the OSD frames.
 //
-// graph_runtime node: input port "input" (stream "input:osd_frames"), output
-// port "output" (stream "output:es_packets"). Converts each incoming RGBA
-// frame to I420 with the built-in software converter (dependency-contract
-// D-3), then feeds video_codec's VideoEncoder (H.264, FFmpeg backend) in push
-// mode: every produced VideoPacket is collected and forwarded as a Packet.
-// The encoder is created lazily on the first frame (dimensions known) and
-// flushed when the input stream is done so buffered packets are not lost.
+// graph_runtime node: input port "input", output port "output" (stream
+// "output:es_packets"). Two input modes, selected by the `input_surface`
+// NodeOptions flag (spec 003):
+//   - CPU (default, host): each incoming RGBA VideoFrame is converted to I420
+//     (built-in software converter) and fed to video_codec's VideoEncoder
+//     (H.264) in push mode; every produced VideoPacket is forwarded.
+//   - Android surface mode (input_surface=true): the encoder is created in
+//     Open() with input_surface=true; its CreateInputSurface() (ANativeWindow*)
+//     is written into the shared LifecycleContext::input_surface. The render
+//     node draws directly onto that surface (GPU, zero-copy) and sends a
+//     PacketNotify; this node then Poll()s the hardware encoder to pump
+//     out encoded data. No CPU VideoFrame flows render -> encoder in this mode.
+// The encoder is created lazily on the first frame (CPU) or in Open (surface,
+// dimensions come from NodeOptions), and flushed when the input is done.
 
 namespace media::record {
 
@@ -33,11 +44,19 @@ class VideoEncoderNode : public graph::runtime::Node {
  private:
   absl::Status EnsureEncoder(const video::codec::VideoFrame& frame);
   void EmitPending(graph::runtime::GraphContext& ctx);
+#if defined(__ANDROID__)
+  // Surface mode: create the encoder in Open(), wire its CreateInputSurface()
+  // into LifecycleContext::input_surface, and attach the packet sink.
+  absl::Status EnsureSurfaceEncoder(graph::runtime::GraphContext& ctx);
+#endif
 
   class PacketSinkAdapter;  // PacketSink -> pending_ packets
 
   int fps_ = 30;
   int bitrate_ = 4'000'000;
+  int width_ = 0;
+  int height_ = 0;
+  bool surface_mode_ = false;
 
   std::unique_ptr<video::codec::VideoEncoder> encoder_;
   std::unique_ptr<PacketSinkAdapter> sink_;

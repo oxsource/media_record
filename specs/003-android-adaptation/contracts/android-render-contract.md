@@ -98,7 +98,7 @@ if (!p.IsEmpty()) {
 - **D-2**: `VideoEncoderNode::Open` 时创建 input surface（内部 `Init()` 调 `AMediaCodec_createInputSurface`），成功后写 `ctx_->input_surface = CreateInputSurface()`（host / 非 surface 模式保持 nullptr）。
 - **D-3**: `DashcamRenderNode` 在**首次 `Process`**（而非 `Open`）时 **lazy 获取** `ctx_->input_surface`，据此构造 `RenderContext`（`CreateFromNativeWindow` + `Surface::Create(ctx)`）+ `DashcamRenderer`；render 是唯一 GL 绘制者（单上下文规则），encoder 只消费 surface 缓冲、不直接绘制；`input_surface` 为 null 则返回可定位错误。
 - **D-4**: `MuxerSinkNode::Close` 读 `ctx_->pipeline_failed`（由 `bool*` 侧边包迁移到 `LifecycleContext*` 字段，行为不变）。
-- **D-5**: `DashcamRenderNode` 暴露 `void* CreateInputSurface()`（surface 模式返回 `ANativeWindow*`，否则 nullptr），供 runner/外部查询。
+- **D-5**: `VideoEncoderNode` 在 surface 模式 `Open` 调 `CreateInputSurface()` 并把结果写 `ctx_->input_surface`（surface 模式返回 `ANativeWindow*`，否则 nullptr）。
 
 > **与纯 input side packet（传值）的边界**：若未来 graph_runtime 支持"节点 output side packet 跨节点传播"，可将 `input_surface` 由 encoder 的 **output side packet** 声明式发布、render 以 **input side packet** 声明依赖，替代"共享指针字段"。本期用 `LifecycleContext*` 指针字段（复用现有范式，最小改动）。
 
@@ -111,11 +111,17 @@ if (!p.IsEmpty()) {
 - **写入（encoder Open 时写 `input_surface`）与读取（render 首次 Process 时读）发生在同一执行阶段的不同节点**，由调度器保证 happens-before，无需 mutex。
 - 未来若进入多线程/并发 Process（async 多 executor），`LifecycleContext` 需加轻量锁或将共享字段改为 `std::atomic`；本期同步模式单写单读。
 
-#### D.4 每帧渲染交付流程
+#### D.4 GPU 数据流（surface 模式下节点间不传 CPU VideoFrame）
 
-- **D-6**: 每帧流程：Canvas 绘制（背景 ExternalImage + 小狗 + 时间戳）→ 共享 `RenderContext` 的 `gr->flush()` → `SwapBuffers()` → `encoder->Poll()`。
+**关键澄清**（2026-08-19）：一旦使用 MediaCodec 作 backend（`input_surface=true`），render→encoder 之间**不再是 CPU 数据流转**。render 节点直接渲染到 encoder 的 input surface（GPU，经 `Surface::Create(ctx)` 零拷贝），再发一个轻量 `PacketNotify`（通用通知，时间戳）给 encoder，encoder 收到后 `Poll()` 泵出编码输出。参考 `video_codec` examples 的 surface 路径（`encode_file.cc`）。
 
-#### D.5 初始化顺序兜底
+因此 graph 拓扑中 render→encoder 的 `frames` 流在 surface 模式下携带的是 `PacketNotify`，而非 `VideoFrame`；节点输入/输出端口用 `SetAny()` 声明（运行时按 `surface_mode_` 分支）。
+
+#### D.5 每帧渲染交付流程
+
+- **D-6**: 每帧流程（surface 模式）：render 在 encoder input surface 上 Canvas 绘制（背景 + 小狗 + 时间戳）→ `Surface::Flush()` + `ctx->SwapBuffers()`（交付编码器）→ render 发 `PacketNotify` → encoder `Poll()` 泵输出。
+
+#### D.6 初始化顺序兜底
 
 - **D-7**: 若共享 `RenderContext` 获取失败（`ctx_->input_surface` 为 null / 非 surface 模式 / 创建失败），render 节点 MUST 返回可定位错误，不得绘制到空指针。
 - **D-8**: render 节点的 renderer 创建**从 `Open` 移到首次 `Process`**（惰性），以规避 Open 顺序依赖；host CPU 路径不受影响（`Open` 无需 encoder）。

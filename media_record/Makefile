@@ -6,6 +6,7 @@
 SHELL := /bin/bash
 
 include mk/verify.mk
+include mk/android.mk
 
 .DEFAULT_GOAL := help
 
@@ -21,3 +22,8 @@ help:
 	@echo "                    (writes PNG frames to $(OUT_DIR)/)"
 	@echo "  make clean        Clean bazel outputs"
 	@echo "  make clean-out    Remove generated artifacts under $(OUT_DIR)/"
+	@echo "Android (needs ANDROID_NDK_HOME + connected device):"
+	@echo "  make android-build    Cross-build dashcam_record (android_arm64)"
+	@echo "  make android-push     Build + push binary/assets/config to device"
+	@echo "  make android-run      Build + push + run on device (surface mode)"
+	@echo "  make android-verify   Build + push + run + pull MP4 to $(OUT_DIR)/"

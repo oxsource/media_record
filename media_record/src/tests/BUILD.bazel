@@ -74,6 +74,7 @@ cc_test(
     # dropped (avcodec_find_encoder crashes at runtime).
     linkstatic = True,
     deps = [
+        "//src/framework/lifecycle:lifecycle",
         "//src/nodes/dashcam_render:dashcam_render",
         "//src/nodes/muxer_sink:muxer_sink",
         "//src/nodes/recorder:recorder",
