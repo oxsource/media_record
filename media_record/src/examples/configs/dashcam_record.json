@@ -1,31 +1,18 @@
 {
   "nodes": [
     {
-      "name": "input",
-      "type": "StreamInputNode",
+      "name": "render",
+      "type": "DashcamRenderNode",
       "options": {
-        "image": "src/examples/assets/dashcam_default.png",
+        "background": "src/examples/assets/dashcam_road.png",
+        "car": "src/examples/assets/flydog.png",
         "width": 1280,
         "height": 720,
         "fps": 30,
-        "frame_count": 300
-      },
-      "output_streams": ["output:frames"]
-    },
-    {
-      "name": "layout",
-      "type": "MultiViewLayoutNode",
-      "input_streams": ["f:frames"],
-      "output_streams": ["output:view_frames"]
-    },
-    {
-      "name": "overlay",
-      "type": "UiOverlayNode",
-      "options": {
+        "frame_count": 300,
         "format": "%Y-%m-%d %H:%M:%S"
       },
-      "input_streams": ["video:view_frames"],
-      "output_streams": ["output:osd_frames"]
+      "output_streams": ["output:frames"]
     },
     {
       "name": "encoder",
@@ -34,7 +21,7 @@
         "fps": 30,
         "bitrate": 4000000
       },
-      "input_streams": ["input:osd_frames"],
+      "input_streams": ["input:frames"],
       "output_streams": ["output:es_packets"]
     },
     {

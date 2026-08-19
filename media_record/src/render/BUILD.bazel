@@ -1,0 +1,15 @@
+package(default_visibility = ["//visibility:public"])
+
+# DashcamRenderer: single composited dashcam frame (background + animated car
+# + timestamp). Built on native::ui Image/Canvas/Surface; composites into the
+# caller's RGBA buffer via Surface::CreateFromPixels (zero-copy). Shared by the
+# dashcam graph node and the standalone debug example.
+cc_library(
+    name = "render",
+    srcs = ["dashcam_renderer.cc"],
+    hdrs = ["dashcam_renderer.h"],
+    deps = [
+        "@native_ui//:native_ui",
+    ],
+    visibility = ["//visibility:public"],
+)

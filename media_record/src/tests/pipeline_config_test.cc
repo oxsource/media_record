@@ -20,12 +20,11 @@
 namespace media::record::config {
 namespace {
 
-// The 9 planned node types (spec 001 research.md §6 / FR-003). Business nodes
-// land in later features; templates must reference exactly these type names.
+// The implemented node types. Templates must reference exactly these type
+// names. (Legacy StreamInput/MultiViewLayout/UiOverlay were replaced by the
+// single compositing DashcamRenderNode.)
 constexpr const char* kPlannedNodeTypes[] = {
-    "StreamInputNode",
-    "MultiViewLayoutNode",
-    "UiOverlayNode",
+    "DashcamRenderNode",
     "VideoEncoderNode",
     "AudioEncoderNode",
     "RecorderNode",
@@ -43,9 +42,6 @@ bool IsPlannedType(const std::string& type) {
 
 constexpr const char* kTemplates[] = {
     "src/examples/configs/dashcam_record.json",
-    "src/examples/configs/recorder.json",
-    "src/examples/configs/stream.json",
-    "src/examples/configs/preview.json",
 };
 
 TEST(PipelineConfigTest, TemplatesParseAndValidate) {
@@ -73,38 +69,38 @@ TEST(PipelineConfigTest, DashcamRecordTopology) {
   ASSERT_TRUE(parsed.ok()) << parsed.status();
   const graph::runtime::GraphConfig& config = *parsed;
 
-  // 6 nodes: StreamInput + Layout + Overlay + Encoder + Recorder + Muxer.
-  ASSERT_EQ(config.nodes.size(), 6u);
-  EXPECT_EQ(config.nodes[0].type, "StreamInputNode");
-  EXPECT_EQ(config.nodes[1].type, "MultiViewLayoutNode");
-  EXPECT_EQ(config.nodes[5].type, "MuxerSinkNode");
+  // 4 nodes: DashcamRender + Encoder + Recorder + Muxer.
+  ASSERT_EQ(config.nodes.size(), 4u);
+  EXPECT_EQ(config.nodes[0].type, "DashcamRenderNode");
+  EXPECT_EQ(config.nodes[3].type, "MuxerSinkNode");
 
   // Node params are carried by each node's JSON "options" object and parsed
   // into NodeDef.options by graph_runtime's JsonParser.
-  const std::string* image = config.nodes[0].options.Get<std::string>("image");
-  ASSERT_NE(image, nullptr);
-  EXPECT_EQ(*image, "src/examples/assets/dashcam_default.png");
+  const std::string* background =
+      config.nodes[0].options.Get<std::string>("background");
+  ASSERT_NE(background, nullptr);
+  EXPECT_EQ(*background, "src/examples/assets/dashcam_road.png");
+  const std::string* car = config.nodes[0].options.Get<std::string>("car");
+  ASSERT_NE(car, nullptr);
+  EXPECT_EQ(*car, "src/examples/assets/flydog.png");
   const int* fps = config.nodes[0].options.Get<int>("fps");
   ASSERT_NE(fps, nullptr);
   EXPECT_EQ(*fps, 30);
   const int* frame_count = config.nodes[0].options.Get<int>("frame_count");
   ASSERT_NE(frame_count, nullptr);
   EXPECT_EQ(*frame_count, 300);
-  const std::string* format = config.nodes[2].options.Get<std::string>("format");
-  ASSERT_NE(format, nullptr);
-  EXPECT_EQ(*format, "%Y-%m-%d %H:%M:%S");
-  const int* bitrate = config.nodes[3].options.Get<int>("bitrate");
+  const int* bitrate = config.nodes[1].options.Get<int>("bitrate");
   ASSERT_NE(bitrate, nullptr);
   EXPECT_EQ(*bitrate, 4000000);
-  const std::string* output = config.nodes[5].options.Get<std::string>("output");
+  const std::string* output = config.nodes[3].options.Get<std::string>("output");
   ASSERT_NE(output, nullptr);
   EXPECT_EQ(*output, "out/dashcam.mp4");
-  const int* muxer_width = config.nodes[5].options.Get<int>("width");
+  const int* muxer_width = config.nodes[3].options.Get<int>("width");
   ASSERT_NE(muxer_width, nullptr);
   EXPECT_EQ(*muxer_width, 1280);
 
-  // 5 implicit streams (frames / view_frames / osd_frames / es_packets /
-  // clips) referenced via "port:stream".
+  // 3 implicit streams (frames / es_packets / clips) referenced via
+  // "port:stream".
   std::set<std::string> streams;
   for (const auto& def : config.nodes) {
     for (const std::string& is : def.input_streams) {
@@ -116,29 +112,7 @@ TEST(PipelineConfigTest, DashcamRecordTopology) {
       streams.insert(colon == std::string::npos ? os : os.substr(colon + 1));
     }
   }
-  EXPECT_EQ(streams.size(), 5u);
-}
-
-TEST(PipelineConfigTest, RecorderTemplateSixStreams) {
-  graph::runtime::JsonParser parser;
-  auto parsed = parser.Parse("src/examples/configs/recorder.json");
-  ASSERT_TRUE(parsed.ok()) << parsed.status();
-  const graph::runtime::GraphConfig& config = *parsed;
-
-  // Dual-cam reference template: 7 nodes / 6 streams.
-  ASSERT_EQ(config.nodes.size(), 7u);
-  std::set<std::string> streams;
-  for (const auto& def : config.nodes) {
-    for (const std::string& is : def.input_streams) {
-      const size_t colon = is.find(':');
-      streams.insert(colon == std::string::npos ? is : is.substr(colon + 1));
-    }
-    for (const std::string& os : def.output_streams) {
-      const size_t colon = os.find(':');
-      streams.insert(colon == std::string::npos ? os : os.substr(colon + 1));
-    }
-  }
-  EXPECT_EQ(streams.size(), 6u);
+  EXPECT_EQ(streams.size(), 3u);
 }
 
 TEST(PipelineConfigTest, MissingFileError) {

@@ -40,9 +40,9 @@ namespace {
 
 void PrintUsage(const char* argv0) {
   std::printf(
-      "usage: %s [--config=FILE] [--image=FILE] [--output=FILE] [--frames=N]\n"
+      "usage: %s [--config=FILE] [--output=FILE] [--frames=N]\n"
       "  default run: 10s @ 30fps from src/examples/configs/dashcam_record.json\n"
-      "  (node params come from each node's JSON 'options' object)\n"
+      "  (background/car assets + node params come from the JSON 'options')\n"
       "  -> out/dashcam.mp4\n",
       argv0);
 }
@@ -70,7 +70,6 @@ bool MkdirParents(const std::string& path) {
 
 int main(int argc, char** argv) {
   std::string config_path = "src/examples/configs/dashcam_record.json";
-  std::string image_override;   // empty = keep the config value
   std::string output_override;  // empty = keep the config value
   int frames_override = -1;     // < 0 = keep the config frame budget
 
@@ -81,13 +80,10 @@ int main(int argc, char** argv) {
       return 0;
     }
     const std::string cfg = TakeFlag(arg, "config");
-    const std::string img = TakeFlag(arg, "image");
     const std::string out = TakeFlag(arg, "output");
     const std::string fr = TakeFlag(arg, "frames");
     if (!cfg.empty()) {
       config_path = cfg;
-    } else if (!img.empty()) {
-      image_override = img;
     } else if (!out.empty()) {
       output_override = out;
     } else if (!fr.empty()) {
@@ -135,7 +131,7 @@ int main(int argc, char** argv) {
   // Resolve the recording budget and output path from the config node options
   // (graph_runtime's GraphConfig::GetNodeOption<T> reads the first node of the
   // given type with a default fallback) before constructing the runtime.
-  int frame_count = config.GetNodeOption<int>("StreamInputNode", "frame_count", 300);
+  int frame_count = config.GetNodeOption<int>("DashcamRenderNode", "frame_count", 300);
   if (frames_override > 0) {
     frame_count = frames_override;  // CLI --frames wins over the config.
   }
@@ -151,14 +147,11 @@ int main(int argc, char** argv) {
   // Optional CLI overrides patch the matching node options via graph_runtime's
   // node-option injection (GraphRuntime::Options, applied at Initialize()).
   graph::runtime::GraphRuntime::Options options;
-  if (!image_override.empty()) {
-    options.nodes["StreamInputNode"].Set("image", image_override);
-  }
   if (!output_override.empty()) {
     options.nodes["MuxerSinkNode"].Set("output", output_override);
   }
   if (frames_override > 0) {
-    options.nodes["StreamInputNode"].Set("frame_count", frames_override);
+    options.nodes["DashcamRenderNode"].Set("frame_count", frames_override);
   }
 
   absl::Status status = runtime.Initialize(config, options);

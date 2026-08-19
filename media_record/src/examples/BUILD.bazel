@@ -1,18 +1,5 @@
 package(default_visibility = ["//visibility:public"])
 
-# Config-driven example (spec 001 US3): loads a pipeline JSON template
-# (graph_runtime schema) and assembles/runs the node graph on the media_record
-# skeleton.
-cc_binary(
-    name = "hello_graph",
-    srcs = ["hello_graph.cc"],
-    data = ["//src/examples/configs:configs"],
-    deps = [
-        "//:media_record",
-        "@graph_runtime//src/framework/public:runtime",
-    ],
-)
-
 # Minimal consumer (task T015 / US1): includes the public umbrella header and
 # links the skeleton public library to verify it compiles standalone.
 cc_binary(
@@ -25,12 +12,12 @@ cc_binary(
 
 # Dashcam recording entry (spec 002 / T020): loads dashcam_record.json
 # (graph_runtime schema, node params in each node's "options" object) and runs
-# the 6-node recorder pipeline for the default 10s @ 30fps -> out/dashcam.mp4.
-# It drives graph_runtime's own async runtime inline (no runner module); CLI
-# overrides (--image/--output/--frames) use GraphRuntime::Options node-option
-# injection. All node libraries are linked (alwayslink) so their
-# GRAPH_RUNTIME_REGISTER_NODE registrations are present for
-# NodeFactoryRegistry::CreateByName(type).
+# the DashcamRenderNode pipeline (DashcamRender -> Encoder -> Recorder -> Muxer)
+# for the default 10s @ 30fps -> out/dashcam.mp4. It drives graph_runtime's own
+# async runtime inline (no runner module); CLI overrides (--output/--frames)
+# use GraphRuntime::Options node-option injection. All node libraries are linked
+# (alwayslink) so their GRAPH_RUNTIME_REGISTER_NODE registrations are present
+# for NodeFactoryRegistry::CreateByName(type).
 cc_binary(
     name = "dashcam_record",
     srcs = ["dashcam_record.cc"],
@@ -41,12 +28,22 @@ cc_binary(
     ],
     linkopts = ["-Wl,-force_load,$(execpath @ffmpeg//:ffmpeg_codec_archive)"],
     deps = [
-        "//src/nodes/multi_view_layout:multi_view_layout",
+        "//src/nodes/dashcam_render:dashcam_render",
         "//src/nodes/muxer_sink:muxer_sink",
         "//src/nodes/recorder:recorder",
-        "//src/nodes/stream_input:stream_input",
-        "//src/nodes/ui_overlay:ui_overlay",
         "//src/nodes/video_encoder:video_encoder",
         "@graph_runtime//src/framework/public:runtime",
+    ],
+)
+
+# Standalone debug entry for DashcamRenderer (no graph_runtime). Renders a few
+# frames and dumps them to PNG via native::ui Surface::CreateFromPixels + Dump.
+cc_binary(
+    name = "render_demo",
+    srcs = ["render_demo.cc"],
+    data = ["//src/examples/assets:assets"],
+    deps = [
+        "//src/render:render",
+        "@native_ui//:native_ui",
     ],
 )

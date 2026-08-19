@@ -69,7 +69,7 @@ class MEDIA_RECORD_API NodeRegistry {
 };
 
 // Registers |Type| under |name| (a string literal) at static-init time.
-// Usage: REGISTER_NODE("StreamInputNode", StreamInputNode)
+// Usage: REGISTER_NODE("MyNode", MyNode)
 // The backing identifier uses the |Type| token (like graph_runtime's
 // GRAPH_RUNTIME_REGISTER_NODE) so |name| may be an arbitrary string literal.
 #define MEDIA_RECORD_REGISTER_NODE(name, Type)                        \

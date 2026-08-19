@@ -1,0 +1,19 @@
+package(default_visibility = ["//visibility:public"])
+
+# DashcamRenderNode (replaces MultiViewLayoutNode + UiOverlayNode). Single
+# compositing node driven by media_record::render::DashcamRenderer (native::ui
+# Canvas + Surface::CreateFromPixels, zero-copy). Self-driven (no input
+# streams); frames are paced to the configured FPS. Emits RGBA VideoFrames for
+# VideoEncoderNode.
+cc_library(
+    name = "dashcam_render",
+    srcs = ["dashcam_render_node.cc"],
+    hdrs = ["dashcam_render_node.h"],
+    deps = [
+        "//src/render:render",
+        "@graph_runtime//src/framework/public:runtime",
+        "@video_codec//src/framework/public:video_codec",
+    ],
+    alwayslink = True,
+    visibility = ["//visibility:public"],
+)

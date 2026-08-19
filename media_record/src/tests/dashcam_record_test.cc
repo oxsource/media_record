@@ -16,7 +16,6 @@
 #include <memory>
 #include <string>
 #include <vector>
-#include <zlib.h>
 
 #include "gtest/gtest.h"
 #include "graph_runtime/config_validator.h"
@@ -131,65 +130,12 @@ graph::runtime::GraphConfig LoadConfig() {
   return parsed.ok() ? std::move(*parsed) : graph::runtime::GraphConfig{};
 }
 
-// Writes a tiny solid-color PNG with the given dimensions (stdlib only).
-std::string WritePng(const std::string& path, int w, int h) {
-  std::vector<uint8_t> raw;
-  raw.reserve(static_cast<size_t>(h) * (w * 3 + 1));
-  for (int y = 0; y < h; ++y) {
-    raw.push_back(0);  // filter: none
-    for (int x = 0; x < w; ++x) {
-      raw.push_back(100);
-      raw.push_back(150);
-      raw.push_back(200);
-    }
-  }
-  std::vector<uint8_t> compressed(compressBound(raw.size()));
-  uLongf compressed_len = static_cast<uLongf>(compressed.size());
-  compress2(compressed.data(), &compressed_len, raw.data(),
-            static_cast<uLong>(raw.size()), 6);
-  compressed.resize(compressed_len);
-
-  const auto chunk = [](const char* tag, const uint8_t* data, size_t len,
-                        std::vector<uint8_t>* out) {
-    const uint32_t big_len = __builtin_bswap32(static_cast<uint32_t>(len));
-    out->insert(out->end(), reinterpret_cast<const uint8_t*>(&big_len),
-                reinterpret_cast<const uint8_t*>(&big_len) + 4);
-    out->insert(out->end(), tag, tag + 4);
-    const size_t start = out->size();
-    out->insert(out->end(), data, data + len);
-    const uint32_t crc = static_cast<uint32_t>(crc32(0, out->data() + start - 4,
-                                                     len + 4));
-    const uint32_t big_crc = __builtin_bswap32(crc);
-    out->insert(out->end(), reinterpret_cast<const uint8_t*>(&big_crc),
-                reinterpret_cast<const uint8_t*>(&big_crc) + 4);
-  };
-
-  std::vector<uint8_t> png{0x89, 'P', 'N', 'G', 0x0D, 0x0A, 0x1A, 0x0A};
-  const uint8_t ihdr[13] = {0, 0, 0, static_cast<uint8_t>(w),
-                            static_cast<uint8_t>(h >> 24 & 0xFF),
-                            static_cast<uint8_t>(h >> 16 & 0xFF),
-                            static_cast<uint8_t>(h >> 8 & 0xFF),
-                            static_cast<uint8_t>(h), 8, 2, 0, 0, 0};
-  chunk("IHDR", ihdr, sizeof(ihdr), &png);
-  chunk("IDAT", compressed.data(), compressed.size(), &png);
-  chunk("IEND", nullptr, 0, &png);
-
-  FILE* f = std::fopen(path.c_str(), "wb");
-  if (f) {
-    std::fwrite(png.data(), 1, png.size(), f);
-    std::fclose(f);
-  }
-  return path;
-}
-
 // Applies the common test scenario overrides on top of the config JSON values:
-// the runfiles-resolved input image, a temp output file, and a short frame
-// budget (sources + runner bound).
+// a temp output file and a short frame budget. Background/car assets and other
+// DashcamRenderNode params come from the config JSON defaults.
 void ApplyScenario(graph::runtime::GraphConfig* config,
-                   const std::string& image, const std::string& output,
-                   int frames) {
-  PatchNodeOption(config, "StreamInputNode", "image", image);
-  PatchNodeOption(config, "StreamInputNode", "frame_count", frames);
+                   const std::string& output, int frames) {
+  PatchNodeOption(config, "DashcamRenderNode", "frame_count", frames);
   PatchNodeOption(config, "MuxerSinkNode", "output", output);
 }
 
@@ -199,8 +145,7 @@ TEST(DashcamRecordTest, RecordsPlayableMp4) {
   std::remove((output + ".tmp").c_str());
 
   graph::runtime::GraphConfig config = LoadConfig();
-  ApplyScenario(&config, Runfile("src/examples/assets/dashcam_default.png"),
-                output, /*frames=*/60);
+  ApplyScenario(&config, output, /*frames=*/60);
   RunnerError run = RunRuntime(std::move(config));
   ASSERT_TRUE(run.ok) << run.message;
 
@@ -218,18 +163,19 @@ TEST(DashcamRecordTest, RecordsPlayableMp4) {
   EXPECT_FALSE(FileExists(output + ".tmp")) << "temp file should be renamed away";
 }
 
-TEST(DashcamRecordTest, MissingInputImageFailsWithPath) {
+TEST(DashcamRecordTest, MissingBackgroundFailsWithPath) {
   const std::string output = TempPath("dashcam_missing_input.mp4");
-  const std::string missing = "/nonexistent_dir_xyz/dashcam_default.png";
+  const std::string missing = "/nonexistent_dir_xyz/dashcam_road.png";
   std::remove(output.c_str());
 
   graph::runtime::GraphConfig config = LoadConfig();
-  ApplyScenario(&config, missing, output, /*frames=*/60);
+  PatchNodeOption(&config, "DashcamRenderNode", "background", missing);
+  ApplyScenario(&config, output, /*frames=*/60);
   RunnerError run = RunRuntime(std::move(config));
   ASSERT_FALSE(run.ok);
   EXPECT_NE(run.message.find(missing), std::string::npos)
       << "error must contain the input path: " << run.message;
-  EXPECT_NE(run.message.find("stream_input"), std::string::npos);
+  EXPECT_NE(run.message.find("dashcam_render"), std::string::npos);
   EXPECT_FALSE(FileExists(output)) << "no output on failure";
 }
 
@@ -238,8 +184,7 @@ TEST(DashcamRecordTest, UnwritableOutputFailsWithPath) {
       "/nonexistent_dir_xyz/out/sub/dashcam.mp4";  // parent does not exist
 
   graph::runtime::GraphConfig config = LoadConfig();
-  ApplyScenario(&config, Runfile("src/examples/assets/dashcam_default.png"),
-                output, /*frames=*/60);
+  ApplyScenario(&config, output, /*frames=*/60);
   RunnerError run = RunRuntime(std::move(config));
   ASSERT_FALSE(run.ok);
   EXPECT_NE(run.message.find("muxer_sink"), std::string::npos);
@@ -250,19 +195,17 @@ TEST(DashcamRecordTest, UnwritableOutputFailsWithPath) {
 }
 
 TEST(DashcamRecordTest, EncodeFailureLeavesNoPartialArtifact) {
-  // An odd-dimension input forces the H.264 encoder Init to fail (x264
+  // An odd render dimension forces the H.264 encoder Init to fail (x264
   // rejects it), exercising the encode-failure path deterministically.
   const std::string output = TempPath("dashcam_encode_fail.mp4");
-  const std::string odd_image = WritePng(TempPath("odd5.png"), 5, 5);
   std::remove(output.c_str());
   std::remove((output + ".tmp").c_str());
 
   graph::runtime::GraphConfig config = LoadConfig();
-  ApplyScenario(&config, odd_image, output, /*frames=*/60);
-  // Force the odd frame dimensions through the whole pipeline: the default
-  // config carries 1280x720, so the odd 5x5 source image must be padded too.
-  PatchNodeOption(&config, "StreamInputNode", "width", 5);
-  PatchNodeOption(&config, "StreamInputNode", "height", 5);
+  ApplyScenario(&config, output, /*frames=*/60);
+  // Render odd frames (e.g. 5x5) through the whole pipeline.
+  PatchNodeOption(&config, "DashcamRenderNode", "width", 5);
+  PatchNodeOption(&config, "DashcamRenderNode", "height", 5);
   PatchNodeOption(&config, "MuxerSinkNode", "width", 5);
   PatchNodeOption(&config, "MuxerSinkNode", "height", 5);
   RunnerError run = RunRuntime(std::move(config));
