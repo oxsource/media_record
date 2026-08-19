@@ -11,7 +11,7 @@
 
 ## 2. 三仓库底层能力盘点
 
-调研结论：**三仓库的 Android 底层能力已基本齐备**，本 feature 主要工作是 media_record 节点接线 + native_ui `ExternalImage` GPU 扩展。
+调研结论：**三仓库的 Android 底层能力已基本齐备**，本 feature 主要工作是 media_record 节点接线（DashcamRenderer 平台分支 + encoder surface 协作）；`ExternalImage` 无需改动（GPU 已由 Surface 抽象支持）。
 
 ### 2.1 native_ui
 
@@ -19,7 +19,7 @@
 |------|------|--------|
 | `AHwb`（`src/framework/surface/ahwb.h`） | Android-only；host stub 返回负状态码 | `AllocateRGBA` / `WriteRGBA` / `ToGpuImage`（零拷贝 GPU 导入）/ `ToCpuImage` / `Describe` / `Lock`/`Unlock` |
 | `Image::FromBuffer(HardwareBuffer, RenderBackend, RenderContext*)` | Android 加载入口；CPU→`ToCpuImage(copy=true)`，GPU→`ToGpuImage(ctx->gr)`；仅 R8G8B8A8_UNORM | 背景图 AHWB 加载 |
-| `ExternalImage`（`src/framework/widgets/external_image.cc`） | **硬编码 `RenderBackend::kCPU`** | **缺口：需扩展支持 GPU（RenderBackend::kGPU + RenderContext）** |
+| `ExternalImage`（`src/framework/widgets/external_image.cc`） | `SetBuffer(HardwareBuffer)` 创建，硬编码 `RenderBackend::kCPU` | **非缺口**：ExternalImage 保持 CPU（仅 SetBuffer）；GPU 由 Surface 抽象承担 |
 | `RenderContext`（`src/framework/surface/render_context.h`） | `CreateFromNativeWindow(surface, w, h)`；`MakeCurrent`/`SwapBuffers`；持有 GrDirectContext + EGL | 在 encoder input surface 上建 EGL 上下文 |
 | `Surface::Create(RenderContext*)` | Android：从 encoder input surface（FBO 0）创建 render target | 渲染目标 |
 | `external_image_demo.cc` | **完整参考闭环**：PNG→RGBA→AHWB→ExternalImage→canvas(on input surface)→SwapBuffers→编码 | 端到端蓝本 |
@@ -43,11 +43,12 @@
 
 ## 3. 关键技术链路
 
-### 3.1 背景图 AHWB + ExternalImage
+### 3.1 背景图 AHWB 加载（GPU 由 Surface 承担）
 
 ```
 背景图 PNG --Image::FromFile--> RGBA --AHwb::AllocateRGBA + WriteRGBA--> AHardwareBuffer
-  --> HardwareBuffer::FromAHardwareBuffer --> ExternalImage(hb) [GPU: Image::FromBuffer(hb, kGPU, ctx)]
+  --> GPU(surface 模式): Image::FromBuffer(hb, kGPU, ctx) 经 ToGpuImage 零拷贝导入
+  --> 布局/预览(host/CPU): ExternalImage(hb) 仅 SetBuffer 加载显示
 ```
 
 ### 3.2 MediaCodec surface 渲染链路
@@ -58,32 +59,28 @@ VideoEncoder(config.input_surface=true)
   --> CreateInputSurface() 返回 ANativeWindow*
   --> RenderContext::CreateFromNativeWindow(win, w, h)   // EGL + GrDirectContext
   --> Surface::Create(ctx)                                // FBO 0 render target
-  --> Canvas draw (背景 ExternalImage + 小狗 + 时间戳)
+  --> Canvas draw (背景 GPU 零拷贝导入 + 小狗 + 时间戳)
   --> ctx->gr->flush() + ctx->SwapBuffers()              // 交付编码器
   --> encoder->Poll()                                     // 泵出编码输出
 ```
 
 ## 4. 关键缺口与决策
 
-### 4.1 `ExternalImage` GPU 扩展（native_ui 改动）
+### 4.1 `ExternalImage` 职责澄清（native_ui 无改动）
 
-当前 `ExternalImage::UpdateBuffer` 硬编码 `RenderBackend::kCPU`：
+**结论**：GPU 不是 ExternalImage 的关注点。`ExternalImage::UpdateBuffer` 硬编码 `RenderBackend::kCPU` 是**合理设计**，不是缺口：
 
 ```cpp
 image_ = native::ui::Image::FromBuffer(buffer_, RenderBackend::kCPU);
 ```
 
-**决策**：扩展 `ExternalImage` 支持 GPU。方案：新增构造参数 / setter 传入 `RenderBackend` + `RenderContext*`（可选），`UpdateBuffer` 时按后端选择 `FromBuffer(buffer_, backend, ctx)`。CPU 为默认，行为不变；GPU 仅在提供 RenderContext 时启用。
+**决策**：`ExternalImage` 保持仅 `SetBuffer(HardwareBuffer)` 创建（CPU 加载显示），**不新增 GPU 接口**（曾误加 `SetRenderContext`，已回滚）。GPU 零拷贝导入已由 **Surface 抽象** 承担：
 
-**接口建议**：
-```cpp
-class ExternalImage : public Widget {
-  // 新增：构造时可注入 GPU 渲染上下文（nullptr = 默认 CPU）
-  ExternalImage(Args&&... args, RenderContext* gpu_ctx = nullptr); // 或独立 setter
-  void SetRenderContext(RenderContext* ctx);   // 可选：运行期切换后端
-  ...
-};
-```
+- `Surface::Create(ctx)`：在 encoder input surface 上建渲染目标
+- `RenderContext`：持有 GrDirectContext（EGL）
+- `Image::FromBuffer(hb, RenderBackend::kGPU, ctx)`：经 `AHwb::ToGpuImage` 零拷贝导入
+
+背景图 GPU 导入由 `DashcamRenderer` 在 Android surface 模式调用以上 Surface 能力处理，不经过 ExternalImage。外部预览/布局仍可用 ExternalImage（CPU）。
 
 **注意**：GPU 路径下 `AHwb::ToGpuImage` 需非空 `GrDirectContext`（来自 RenderContext），且只支持 R8G8B8A8_UNORM。
 

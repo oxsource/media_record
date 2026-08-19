@@ -4,37 +4,23 @@
 
 ## 1. 目标
 
-定义 Android 平台下，media_record 的渲染器（DashcamRenderer）与编码器（video_codec MediaCodec backend）之间如何通过 `CreateInputSurface` 协作，以及 native_ui `ExternalImage` 的 GPU 扩展契约。
+定义 Android 平台下，media_record 的渲染器（DashcamRenderer）与编码器（video_codec MediaCodec backend）之间如何通过 `CreateInputSurface` 协作，以及 `ExternalImage` 的职责边界（保持 CPU、仅 SetBuffer）。
 
-## 2. ExternalImage GPU 扩展契约（native_ui）
+## 2. ExternalImage 契约（native_ui，保持不变）
 
-### 2.1 接口
+### 2.1 结论
 
-`ExternalImage` 在保留 CPU 默认路径的基础上，新增 GPU 渲染上下文注入：
+**GPU 不是 ExternalImage 的关注点**。`ExternalImage` 仅支持 `SetBuffer(HardwareBuffer)`（及构造传 `HardwareBuffer`）创建，保持 **CPU（raster）加载显示**，不引入 `RenderContext`/`RenderBackend` 依赖。GPU 零拷贝导入已由 **Surface 抽象** 支持（`Surface::Create(ctx)` + `Image::FromBuffer(buffer, kGPU, ctx)` + `RenderContext`），并在 Android surface 模式下由 `DashcamRenderer` 处理。
 
-```cpp
-class ExternalImage : public Widget {
- public:
-  // 构造：保持现有可变参数，支持额外的 RenderContext*（可选，默认 nullptr = CPU）
-  template <typename... Args>
-  explicit ExternalImage(Args&&... args);
+**因此 native_ui 的 `ExternalImage` 无需任何改动**（无 Phase 1 改动）。
 
-  // 运行期注入 GPU 渲染上下文；nullptr 切回 CPU。返回 true 表示切换成功。
-  bool SetRenderContext(RenderContext* ctx);
+### 2.2 职责划分
 
-  void SetBuffer(HardwareBuffer buffer);
-  void Watch(Property<HardwareBuffer>& prop);
-  void Draw(Canvas& canvas) override;
-};
-```
+- **A-1（ExternalImage 职责）**: 仅 `SetBuffer(HardwareBuffer)` 创建，CPU 加载显示，作为布局/显示 widget。不新增 GPU 接口。
+- **A-2（GPU 归属）**: GPU 零拷贝导入由 `Surface` 抽象承担（`Surface::Create(ctx)`、`RenderContext`、`Image::FromBuffer(kGPU)`），由 `DashcamRenderer` 在 Android surface 模式调用。
+- **A-3（保持）**: `ExternalImage::UpdateBuffer` 固定 `RenderBackend::kCPU`，行为不变，无回归。
 
-### 2.2 规则
-
-- **A-1（后端选择）**: `image_` 的构建由 `RenderContext*` 决定：非空 → `Image::FromBuffer(buffer_, RenderBackend::kGPU, ctx)`；空 → `Image::FromBuffer(buffer_, RenderBackend::kCPU)`。
-- **A-2（默认不变）**: 未注入 RenderContext 时行为与当前完全一致（CPU 零行为回归）。
-- **A-3（GPU 前提）**: GPU 路径要求 `ctx->gr` 非空（`RenderContext::CreateFromNativeWindow` 成功）且 buffer 为 `R8G8B8A8_UNORM`；否则 `FromBuffer` 返回空，`ExternalImage` 不绘制（不崩溃）。
-- **A-4（零拷贝）**: GPU 路径经 `AHwb::ToGpuImage` 零拷贝导入，不产生 CPU 拷贝。
-- **A-5（重建守卫）**: 仅当 handle 或后端变化时才重建 `image_`（复用现有 `UpdateBuffer` 守卫逻辑）。
+## 3. VideoEncoder surface 契约（video_codec，已存在，引用确认）
 
 ## 3. VideoEncoder surface 契约（video_codec，已存在，引用确认）
 
@@ -136,7 +122,7 @@ if (!p.IsEmpty()) {
 
 ## 5. 失败与清理
 
-- **E-1**: AHWB 分配 / ExternalImage GPU 导入 / RenderContext 创建失败：返回可定位错误，安全释放已分配资源，不产生残缺产物。
+- **E-1**: AHWB 分配 / Surface GPU 导入 / RenderContext 创建失败：返回可定位错误，安全释放已分配资源，不产生残缺产物。
 - **E-2**: encoder 不支持 surface 模式（`CreateInputSurface` 返回 nullptr）：render 节点不得绘制到 nullptr，应报错或回退。
 - **E-3**: host 上调用 Android-only 接口：返回 nullptr / 退出非零，不崩溃。
 
@@ -144,4 +130,4 @@ if (!p.IsEmpty()) {
 
 - **V-1**: host `make verify` 全绿（原 CPU 路径无回归）。
 - **V-2**: Android 端到端 demo 产出可播放 H.264 MP4。
-- **V-3**: `ExternalImage` CPU/GPU 双后端单测覆盖（host 侧可测 CPU；GPU 需 Android）。
+- **V-3**: `ExternalImage` 保持原样（仅 SetBuffer/CPU）无回归；GPU 导入在 Android demo 验证。

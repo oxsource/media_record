@@ -4,13 +4,13 @@
 
 ## 概览
 
-按平台分支把 Dashcam 渲染 + 编码管线适配到 Android：背景图走 AHWB + ExternalImage（GPU），编码走 MediaCodec backend + CreateInputSurface。host（CPU RGBA）路径保持不变。
+按平台分支把 Dashcam 渲染 + 编码管线适配到 Android：背景图走 AHWB + Surface GPU 零拷贝导入（ExternalImage 保持 CPU/仅 SetBuffer），编码走 MediaCodec backend + CreateInputSurface。host（CPU RGBA）路径保持不变。
 
 涉及仓库与改动粒度：
 
 | 仓库 | 改动 | 目标 |
 |------|------|------|
-| native_ui | `ExternalImage` 支持 GPU 后端 | 背景图零拷贝 GPU 显示 |
+| native_ui | 无改动（`ExternalImage` 保持 CPU/仅 SetBuffer；GPU 已由 Surface 抽象支持） | 背景图零拷贝 GPU 显示（经 Surface） |
 | media_record | `DashcamRenderer`/`DashcamRenderNode`/`VideoEncoderNode` 平台分支 + Android demo | Android 端到端硬件路径 |
 
 （video_codec 的 MediaCodec backend + `CreateInputSurface` 已实现，无需改动，仅需确认契约对接。）
@@ -34,24 +34,24 @@
 - **同步保证**：单写（encoder Open 写 `input_surface`）单读（render 首次 Process 读），由调度模型保证顺序，无需 mutex；未来多线程场景改为 `std::atomic` 字段。
 - **升级方向**：若未来 graph_runtime 支持"节点 output→input side packet 传播"，`input_surface` 可由 encoder 以 output side packet 声明式发布、render 以 input side packet 声明依赖，替代共享指针字段。
 
-### Phase 1: native_ui — `ExternalImage` GPU 支持
+### Phase 1: native_ui — 确认 GPU 由 Surface 承担（ExternalImage 无改动）
 
-- [ ] 扩展 `ExternalImage`：新增 `RenderContext*` 注入（构造或 setter），`UpdateBuffer` 按后端选择 `Image::FromBuffer(buffer_, backend, ctx)`。
-- [ ] 保持 CPU 为默认后端，行为不变；GPU 仅在提供非空 RenderContext 时启用。
-- [ ] 更新 `external_image_demo` 或新增用例验证 GPU 路径（可选）。
-- [ ] host 编译 + 测试通过（无回归）。
+- [x] 澄清：GPU 不是 ExternalImage 的关注点——`ExternalImage` 仅 `SetBuffer(HardwareBuffer)` 创建（CPU 加载），不新增 GPU 接口（已回滚误加的 `SetRenderContext`）。
+- [x] 确认 GPU 零拷贝导入已由 **Surface 抽象** 支持（`Surface::Create(ctx)` + `Image::FromBuffer(kGPU)` + `RenderContext`）。
+- [ ] native_ui 无代码改动，host 编译 + 测试通过（无回归）。
 
-**验收**：`ExternalImage` 支持 GPU/CPU 双后端，CPU 默认无回归。
+**验收**：`ExternalImage` 保持原样（仅 SetBuffer/CPU），无回归；GPU 导入能力由 Surface 层提供。
 
 ### Phase 2: media_record — 渲染器平台分支
 
-- [ ] `DashcamRenderer` 增加 Android surface 渲染路径：
+- [x] **native_ui 前置**：导出 `render_context.h` 到 public umbrella（新增 `include/native_ui/render_context.h` 转发头）——media_record 需访问 `RenderContext`（`SwapBuffers`）以交付编码器。
+- [x] `DashcamRenderer` 新增 Android surface 渲染路径 `Render(frame_index, ts, RenderContext*)`（`#ifdef __ANDROID__`）：
   - host：保持 `Surface::CreateFromPixels(buffer)` CPU 路径。
-  - Android：接收 `RenderContext*`（来自 encoder input surface），用 `Surface::Create(ctx)` 创建渲染目标，Canvas 直接绘制（背景 ExternalImage + 小狗 + 时间戳）。
-- [ ] 小狗跳动动画、时间戳绘制逻辑复用现有实现，仅渲染目标不同。
-- [ ] 按 encoder native stride 对齐渲染尺寸（16/256）。
+  - Android：`Surface::Create(ctx)`（FBO 0，encoder input surface）+ `Surface::Flush()` + `ctx->SwapBuffers()` 交付编码器；小狗/时间戳逻辑复用现有实现。
+- [ ] 背景 GPU 零拷贝导入（Phase 2b，需导出 `ahwb.h`）：背景写入 AHWB → `Surface::CreateFromBuffer(hb, kGPU, ctx)` 经 `ToGpuImage` 零拷贝导入。当前用 GPU 后端上传 CPU 背景图（正确、非零拷贝），零拷贝作为后续优化。
+- [ ] 按 encoder native stride 对齐渲染尺寸（16/256，在节点/runner 层配置）。
 
-**验收**：同一渲染内容，host 走 CPU，Android 走 surface，逻辑复用。
+**验收**：同一渲染内容，host 走 CPU，Android 走 surface，逻辑复用；host 编译无回归。
 
 ### Phase 3: media_record — LifecycleContext + 节点接线
 
@@ -80,5 +80,5 @@
 
 ## 交付物
 
-- 三仓库的代码改动（native_ui ExternalImage GPU；media_record 渲染/节点分支 + Android demo）。
+- 代码改动：media_record 渲染/节点分支 + Android demo（native_ui 无改动）。
 - Android 端到端 demo + host `make verify` 验证记录。

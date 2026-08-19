@@ -6,6 +6,14 @@
 
 #include "native_ui/surface.h"
 
+#if defined(__ANDROID__)
+#include "native_ui/render_context.h"
+#endif
+
+namespace native::ui {
+class Canvas;  // fwd: DrawFrame takes a Canvas& (Skia isolated in the .cc)
+}  // namespace native::ui
+
 namespace media {
 namespace record {
 namespace render {
@@ -51,8 +59,25 @@ class DashcamRenderer {
   bool Render(int frame_index, const std::string& timestamp,
               native::ui::PixelBuffer& buffer);
 
+#if defined(__ANDROID__)
+  // Android/surface mode: composes one frame directly onto the MediaCodec
+  // encoder input surface hosted by `ctx` (Surface::Create(ctx), FBO 0).
+  // Background is imported zero-copy via Surface::CreateFromBuffer(kGPU) when
+  // available (else falls back to CPU raster). Same bounce/timestamp logic as
+  // the CPU path; the frame is flushed + swapped (presented) to the encoder
+  // inside this call. Returns false on setup/render failure.
+  bool Render(int frame_index, const std::string& timestamp,
+              native::ui::RenderContext* ctx);
+#endif
+
  private:
   DashcamRenderer(int target_width, int target_height);
+
+  // Draws the common scene (clear + background + bouncing dog + timestamp) onto
+  // `canvas`. Shared by the CPU (PixelBuffer) and Android (RenderContext
+  // surface) Render paths — only the canvas acquisition differs between them.
+  bool DrawFrame(native::ui::Canvas& canvas, int frame_index,
+                 const std::string& timestamp);
 
   int target_width_ = 0;
   int target_height_ = 0;

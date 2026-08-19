@@ -10,6 +10,10 @@
 #include "native_ui/render.h"
 #include "native_ui/surface.h"
 
+#if defined(__ANDROID__)
+#include "native_ui/render_context.h"
+#endif
+
 namespace media {
 namespace record {
 namespace render {
@@ -156,8 +160,15 @@ bool DashcamRenderer::Render(int frame_index, const std::string& timestamp,
     ctx_->canvas = std::make_unique<native::ui::Canvas>(*ctx_->surface);
     ctx_->surface_buffer = buf_ptr;
   }
-  native::ui::Canvas& canvas = *ctx_->canvas;
+  // Shared scene drawing (background + bouncing dog + timestamp).
+  return DrawFrame(*ctx_->canvas, frame_index, timestamp);
+}
 
+// Shared scene: clear + background + bouncing dog + timestamp. Used by both the
+// CPU (PixelBuffer) and Android (RenderContext surface) Render paths — the only
+// thing that differs between them is how the canvas is acquired.
+bool DashcamRenderer::DrawFrame(native::ui::Canvas& canvas, int frame_index,
+                                const std::string& timestamp) {
   // Clear to opaque black so uncovered edges (if any) don't carry transparency
   // into the encoded video.
   canvas.Clear(native::ui::Color{0, 0, 0, 255});
@@ -178,10 +189,43 @@ bool DashcamRenderer::Render(int frame_index, const std::string& timestamp,
 
   // Timestamp: top-left, large white font for readability.
   canvas.DrawText(timestamp, ctx_->text_pos, ctx_->text_paint, ctx_->text_size);
-
-  // The canvas has drawn straight into the caller's `buffer` (zero-copy).
   return true;
 }
+
+#if defined(__ANDROID__)
+// Android/surface mode: compose directly onto the encoder input surface.
+//
+// `Surface::Create(ctx)` hosts the canvas on the MediaCodec input surface
+// (FBO 0, GLES/EGL, single-context rule). The canvas is created per frame
+// (Skia draw state), which matches the native_ui external_image_demo pattern.
+// Background/dog/timestamp share the exact same geometry + animation as the
+// CPU path — only the render target differs. After drawing we flush the GPU
+// work and present (SwapBuffers) so the encoder receives the frame zero-copy.
+//
+// NOTE: true zero-copy AHWB->GPU background import (Surface::CreateFromBuffer
+// with RenderBackend::kGPU) is a later optimization; for now the GPU backend
+// uploads the raster background image via Skia (correct, non zero-copy).
+bool DashcamRenderer::Render(int frame_index, const std::string& timestamp,
+                             native::ui::RenderContext* ctx) {
+  if (!ctx_ || !ctx || !ctx->gr) return false;
+
+  auto surface = native::ui::Surface::Create(ctx);
+  if (!surface) {
+    std::fprintf(stderr, "DashcamRenderer: Surface::Create(ctx) failed\n");
+    return false;
+  }
+
+  native::ui::Canvas canvas(*surface);
+
+  // Shared scene drawing (background + bouncing dog + timestamp) — same as CPU.
+  if (!DrawFrame(canvas, frame_index, timestamp)) return false;
+
+  // Submit GPU work and present the frame to the encoder.
+  surface->Flush();
+  ctx->SwapBuffers();
+  return true;
+}
+#endif  // __ANDROID__
 
 }  // namespace render
 }  // namespace record
