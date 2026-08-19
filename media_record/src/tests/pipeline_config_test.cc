@@ -1,16 +1,21 @@
-// Pipeline template config validation (spec 001, task T025 / US3).
+// Pipeline template config validation (spec 001, task T025 / US3; updated for
+// spec 002: templates are graph_runtime JSON schema, parsed into
+// graph::runtime::GraphConfig by graph_runtime's own JsonParser and validated
+// by graph_runtime's ConfigValidator).
 //
-// Loads the three pre-built templates (recorder / stream / preview) and checks:
-//   - they parse as graph_runtime native JSON schema
-//   - node/stream references are structurally valid (contracts P-2/P-3)
-//   - every referenced node type is one of the 10 planned node types (they are
-//     registered by business-node features; see research.md §6 mapping)
+// Loads the pre-built templates (dashcam_record / recorder / stream / preview)
+// and checks:
+//   - they parse as graph_runtime JSON schema (graph_runtime's JsonParser)
+//   - the graph is structurally valid (unique names, connectivity, no cycles)
+//   - every referenced node type is one of the 10 planned node types
 // Negative cases verify the locatable error messages required by FR-009.
 
+#include <set>
 #include <string>
 
 #include "gtest/gtest.h"
-#include "src/framework/config/pipeline_config.h"
+#include "src/framework/config/config_validator.h"
+#include "src/framework/config/json/json_parser.h"
 
 namespace media::record::config {
 namespace {
@@ -38,6 +43,7 @@ bool IsPlannedType(const std::string& type) {
 }
 
 constexpr const char* kTemplates[] = {
+    "src/examples/configs/dashcam_record.json",
     "src/examples/configs/recorder.json",
     "src/examples/configs/stream.json",
     "src/examples/configs/preview.json",
@@ -45,116 +51,97 @@ constexpr const char* kTemplates[] = {
 
 TEST(PipelineConfigTest, TemplatesParseAndValidate) {
   for (const char* path : kTemplates) {
-    PipelineConfig config;
-    ConfigStatus status = LoadPipelineConfigFile(path, &config);
-    ASSERT_TRUE(status.ok) << path << ": " << status.message;
-    ASSERT_FALSE(config.nodes.empty()) << path;
+    graph::runtime::JsonParser parser;
+    auto parsed = parser.Parse(path);
+    ASSERT_TRUE(parsed.ok()) << path << ": " << parsed.status();
+    ASSERT_FALSE(parsed->nodes.empty()) << path;
 
-    status = ValidatePipelineConfig(config);
-    EXPECT_TRUE(status.ok) << path << ": " << status.message;
+    const absl::Status validation =
+        graph::runtime::ConfigValidator::Validate(*parsed);
+    EXPECT_TRUE(validation.ok()) << path << ": " << validation.ToString();
 
-    status = CheckRegisteredTypes(config, IsPlannedType);
-    EXPECT_TRUE(status.ok) << path << ": " << status.message;
+    for (const auto& def : parsed->nodes) {
+      EXPECT_TRUE(IsPlannedType(def.type))
+          << path << ": node '" << def.name << "' has unexpected type '"
+          << def.type << "'";
+    }
   }
 }
 
-TEST(PipelineConfigTest, RecorderTopologyIsComplete) {
-  PipelineConfig config;
-  ConfigStatus status =
-      LoadPipelineConfigFile(kTemplates[0], &config);
-  ASSERT_TRUE(status.ok) << status.message;
+TEST(PipelineConfigTest, DashcamRecordTopology) {
+  graph::runtime::JsonParser parser;
+  auto parsed = parser.Parse("src/examples/configs/dashcam_record.json");
+  ASSERT_TRUE(parsed.ok()) << parsed.status();
+  const graph::runtime::GraphConfig& config = *parsed;
 
-  EXPECT_EQ(config.nodes.size(), 8u);
-  EXPECT_EQ(config.streams.size(), 7u);
+  // 7 nodes: 1×StreamInput + 1×SignalSource + Layout + Overlay + Encoder +
+  // Recorder + Muxer.
+  ASSERT_EQ(config.nodes.size(), 7u);
+  EXPECT_EQ(config.nodes[0].type, "StreamInputNode");
+  EXPECT_EQ(config.nodes[1].type, "SignalSourceNode");
+  EXPECT_EQ(config.nodes[6].type, "MuxerSinkNode");
 
-  // Full recorder chain: input -> layout -> overlay -> encoder -> recorder
-  // -> muxer. Every node input must be fed by a producer (already validated),
-  // spot-check the head and tail of the chain.
-  const PipelineNodeDef* muxer = nullptr;
-  for (const PipelineNodeDef& node : config.nodes) {
-    if (node.name == "muxer") muxer = &node;
+  // 6 implicit streams (frames / signals / view_frames / osd_frames /
+  // es_packets / clips) referenced via "port:stream".
+  std::set<std::string> streams;
+  for (const auto& def : config.nodes) {
+    for (const std::string& is : def.input_streams) {
+      const size_t colon = is.find(':');
+      streams.insert(colon == std::string::npos ? is : is.substr(colon + 1));
+    }
+    for (const std::string& os : def.output_streams) {
+      const size_t colon = os.find(':');
+      streams.insert(colon == std::string::npos ? os : os.substr(colon + 1));
+    }
   }
-  ASSERT_NE(muxer, nullptr);
-  ASSERT_EQ(muxer->input_streams.size(), 1u);
-  EXPECT_EQ(muxer->input_streams[0], "input:clips");
+  EXPECT_EQ(streams.size(), 6u);
 }
 
-TEST(PipelineConfigTest, DuplicateNodeNameIsRejected) {
-  const char* kJson =
-      "{\"nodes\":["
-      "{\"name\":\"a\",\"type\":\"StreamInputNode\",\"output_streams\":[\"output:x\"]},"
-      "{\"name\":\"a\",\"type\":\"MuxerSinkNode\",\"input_streams\":[\"input:x\"]}]}";
-  PipelineConfig config;
-  ASSERT_TRUE(ParsePipelineConfig(kJson, &config).ok);
-  ConfigStatus status = ValidatePipelineConfig(config);
-  ASSERT_FALSE(status.ok);
-  EXPECT_NE(status.message.find("duplicate node name: 'a'"),
+TEST(PipelineConfigTest, RecorderTemplateSevenStreams) {
+  graph::runtime::JsonParser parser;
+  auto parsed = parser.Parse("src/examples/configs/recorder.json");
+  ASSERT_TRUE(parsed.ok()) << parsed.status();
+  const graph::runtime::GraphConfig& config = *parsed;
+
+  // Dual-cam reference template: 8 nodes / 7 streams (assertion unchanged).
+  ASSERT_EQ(config.nodes.size(), 8u);
+  std::set<std::string> streams;
+  for (const auto& def : config.nodes) {
+    for (const std::string& is : def.input_streams) {
+      const size_t colon = is.find(':');
+      streams.insert(colon == std::string::npos ? is : is.substr(colon + 1));
+    }
+    for (const std::string& os : def.output_streams) {
+      const size_t colon = os.find(':');
+      streams.insert(colon == std::string::npos ? os : os.substr(colon + 1));
+    }
+  }
+  EXPECT_EQ(streams.size(), 7u);
+}
+
+TEST(PipelineConfigTest, MissingFileError) {
+  graph::runtime::JsonParser parser;
+  auto parsed = parser.Parse("nonexistent.json");
+  EXPECT_FALSE(parsed.ok());
+  EXPECT_NE(parsed.status().ToString().find("nonexistent.json"),
             std::string::npos);
 }
 
-TEST(PipelineConfigTest, UndefinedDestNodeIsRejected) {
-  const char* kJson =
-      "{\"nodes\":["
-      "{\"name\":\"a\",\"type\":\"StreamInputNode\",\"output_streams\":[\"output:x\"]}],"
-      "\"streams\":[{\"name\":\"x\",\"source_node\":\"a\",\"source_port\":\"output\","
-      "\"dest_node\":\"ghost\",\"dest_port\":\"input\"}]}";
-  PipelineConfig config;
-  ASSERT_TRUE(ParsePipelineConfig(kJson, &config).ok);
-  ConfigStatus status = ValidatePipelineConfig(config);
-  ASSERT_FALSE(status.ok);
-  EXPECT_NE(status.message.find("dest_node 'ghost'"), std::string::npos);
-  EXPECT_NE(status.message.find("stream 'x'"), std::string::npos);
-}
-
-TEST(PipelineConfigTest, MismatchedPortTagIsRejected) {
-  const char* kJson =
-      "{\"nodes\":["
-      "{\"name\":\"a\",\"type\":\"StreamInputNode\",\"output_streams\":[\"output:x\"]},"
-      "{\"name\":\"b\",\"type\":\"MuxerSinkNode\",\"input_streams\":[\"input:x\"]}],"
-      "\"streams\":[{\"name\":\"x\",\"source_node\":\"a\",\"source_port\":\"output\","
-      "\"dest_node\":\"b\",\"dest_port\":\"wrong_tag\"}]}";
-  PipelineConfig config;
-  ASSERT_TRUE(ParsePipelineConfig(kJson, &config).ok);
-  ConfigStatus status = ValidatePipelineConfig(config);
-  ASSERT_FALSE(status.ok);
-  EXPECT_NE(status.message.find("has no input port 'wrong_tag'"),
-            std::string::npos);
-  EXPECT_NE(status.message.find("dest node 'b'"), std::string::npos);
-}
-
-TEST(PipelineConfigTest, MissingProducerIsRejected) {
-  // Node b consumes 'x' but no node produces it (mirrors graph_runtime
-  // ConfigValidator::ValidateConnectivity).
-  const char* kJson =
-      "{\"nodes\":["
-      "{\"name\":\"b\",\"type\":\"MuxerSinkNode\",\"input_streams\":[\"input:x\"]}]}";
-  PipelineConfig config;
-  ASSERT_TRUE(ParsePipelineConfig(kJson, &config).ok);
-  ConfigStatus status = ValidatePipelineConfig(config);
-  ASSERT_FALSE(status.ok);
-  EXPECT_NE(status.message.find("node 'b'"), std::string::npos);
-  EXPECT_NE(status.message.find("input stream 'x'"), std::string::npos);
-}
-
-TEST(PipelineConfigTest, UnregisteredTypeErrorIsLocatable) {
-  const char* kJson =
-      "{\"nodes\":["
-      "{\"name\":\"fancy\",\"type\":\"NotARealNode\",\"output_streams\":[\"output:x\"]}]}";
-  PipelineConfig config;
-  ASSERT_TRUE(ParsePipelineConfig(kJson, &config).ok);
-  ConfigStatus status = CheckRegisteredTypes(config, IsPlannedType);
-  ASSERT_FALSE(status.ok);
-  EXPECT_NE(status.message.find("node 'fancy'"), std::string::npos);
-  EXPECT_NE(status.message.find("unregistered node type 'NotARealNode'"),
+TEST(PipelineConfigTest, MalformedJsonError) {
+  graph::runtime::JsonParser parser;
+  auto parsed = parser.ParseFromString("{ \"nodes\": [");
+  EXPECT_FALSE(parsed.ok());
+  EXPECT_NE(parsed.status().ToString().find("JSON parse error"),
             std::string::npos);
 }
 
-TEST(PipelineConfigTest, MalformedJsonIsRejected) {
-  PipelineConfig config;
-  ConfigStatus status =
-      ParsePipelineConfig("{\"nodes\": [", &config);
-  ASSERT_FALSE(status.ok);
-  EXPECT_NE(status.message.find("json error"), std::string::npos);
+TEST(PipelineConfigTest, MissingTypeError) {
+  graph::runtime::JsonParser parser;
+  auto parsed =
+      parser.ParseFromString("{ \"nodes\": [ { \"name\": \"n\" } ] }");
+  EXPECT_FALSE(parsed.ok());
+  EXPECT_NE(parsed.status().ToString().find("type is required"),
+            std::string::npos);
 }
 
 }  // namespace

@@ -6,8 +6,12 @@
 #include <string>
 
 #include "native_ui/widgets.h"
-#include "src/framework/transport/packet.h"
-#include "src/framework/transport/recording_defaults.h"
+#include "src/framework/node/graph_context.h"
+#include "src/framework/node/node_contract.h"
+#include "src/framework/node/node_options.h"
+#include "src/framework/node/node_registry.h"
+#include "src/framework/stream/packet.h"
+#include "src/nodes/signal_source/signal_event.h"
 #include "src/nodes/ui_overlay/bitmap_font.h"
 #include "video_codec/video_codec.h"
 
@@ -33,33 +37,46 @@ std::string FormatTimestamp(const std::string& format) {
 
 }  // namespace
 
-NodeStatus UiOverlayNode::Process() {
-  StreamBuffer* in = Input("view_frames");
-  StreamBuffer* out = Output("osd_frames");
-  if (in == nullptr || out == nullptr) {
-    return NodeStatus{false, "ui_overlay: missing input 'view_frames' or output "
-                             "'osd_frames'"};
+UiOverlayNode::UiOverlayNode(const std::string& name,
+                             const graph::runtime::NodeOptions& options)
+    : Node(name) {
+  if (const std::string* v = options.Get<std::string>("format")) {
+    format_ = *v;
   }
+}
 
-  // Consume (and ignore) bypass signal events: this feature renders only the
-  // real-clock timestamp OSD; events are a reserved extension point. Draining
-  // keeps the signal stream empty so the pipeline drain converges.
-  if (StreamBuffer* signals = Input("signals")) {
-    Packet event;
-    while (signals->Pop(&event)) {
-    }
+absl::Status UiOverlayNode::GetContract(graph::runtime::NodeContract* c) {
+  c->Inputs().Get("video").Set<video::codec::VideoFrame>();
+  c->Inputs().Get("signal").Set<SignalEvent>();
+  c->Outputs().Get("output").Set<video::codec::VideoFrame>();
+  return absl::OkStatus();
+}
+
+absl::Status UiOverlayNode::Open(graph::runtime::GraphContext&) {
+  return absl::OkStatus();
+}
+
+absl::Status UiOverlayNode::Close(graph::runtime::GraphContext&) {
+  return absl::OkStatus();
+}
+
+absl::Status UiOverlayNode::Process(graph::runtime::GraphContext& ctx) {
+  // Bypass signal events are consumed and ignored: this feature renders only
+  // the real-clock timestamp OSD; events are a reserved extension point. The
+  // runner moved all pending signal packets into this shard — ignoring them
+  // keeps the signal stream drained.
+  (void)ctx.Inputs().Get("signal");
+
+  auto& in = ctx.Inputs().Get("video");
+  if (in.IsEmpty()) return absl::OkStatus();  // nothing to overlay this pass
+  auto frame_or = in.Value().Share<video::codec::VideoFrame>();
+  if (!frame_or.ok()) {
+    return absl::InvalidArgumentError(
+        "ui_overlay: unexpected non-frame packet on 'video'");
   }
+  const video::codec::VideoFrame& frame = **frame_or;
 
-  Packet pkt;
-  if (!in->Pop(&pkt)) return NodeStatus{};  // nothing to overlay this pass
-  if (!pkt.IsFrame()) {
-    return NodeStatus{false,
-                      "ui_overlay: unexpected non-frame packet on 'view_frames'"};
-  }
-  video::codec::VideoFrame frame =
-      std::get<video::codec::VideoFrame>(std::move(pkt.payload()));
-
-  const std::string ts = FormatTimestamp(Defaults().timestamp_format);
+  const std::string ts = FormatTimestamp(format_);
   const int text_w = BitmapFont::MeasureWidth(ts);
   const int box_w = text_w + 2 * BitmapFont::kPadding;
   const int box_h = BitmapFont::Height();
@@ -82,16 +99,25 @@ NodeStatus UiOverlayNode::Process() {
   const int x = static_cast<int>(box.x) + BitmapFont::kPadding;
   const int y = static_cast<int>(box.y) + BitmapFont::kPadding;
 
-  BitmapFont::Draw(frame.planes[0].data(), frame.width, frame.height, x, y, ts,
-                   kFgColor, kBgColor);
+  video::codec::VideoFrame out_frame;
+  out_frame.format = frame.format;
+  out_frame.width = frame.width;
+  out_frame.height = frame.height;
+  out_frame.stride[0] = frame.stride[0];
+  out_frame.planes[0] = frame.planes[0];  // copy the base frame
+  out_frame.timestamp_us = frame.timestamp_us;
 
-  Packet out_pkt("osd_frames", std::move(frame), pkt.pts_us());
-  if (!out->Push(std::move(out_pkt))) {
-    return NodeStatus{false, "ui_overlay: output buffer full or EOS"};
-  }
-  return NodeStatus{};
+  BitmapFont::Draw(out_frame.planes[0].data(), out_frame.width,
+                   out_frame.height, x, y, ts, kFgColor, kBgColor);
+
+  auto pkt = graph::runtime::Packet::MakePacket<video::codec::VideoFrame>(
+                 std::move(out_frame))
+                 .At(in.Value().timestamp());
+  ctx.Outputs().Get("output").AddPacket(std::move(pkt));
+  return absl::OkStatus();
 }
 
-REGISTER_NODE("UiOverlayNode", UiOverlayNode);
+namespace { using media::record::UiOverlayNode; }
+GRAPH_RUNTIME_REGISTER_NODE("UiOverlayNode", UiOverlayNode);
 
 }  // namespace media::record

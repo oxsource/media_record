@@ -1,14 +1,14 @@
 package(default_visibility = ["//visibility:public"])
 
-# RecorderNode (spec 002): single-session single-segment recording lifecycle,
-# forwards encoded packets to the muxer.
+# RecorderNode (spec 002): graph_runtime node; single-session single-segment
+# recording lifecycle, forwards encoded packets to the muxer.
+
 cc_library(
     name = "recorder",
     srcs = ["recorder_node.cc"],
     hdrs = ["recorder_node.h"],
     deps = [
-        "//src/framework/public:media_record",
-        "//src/framework/transport:transport",
+        "@graph_runtime//src/framework/public:runtime",
         "@video_codec//src/framework/public:video_codec",
     ],
     alwayslink = True,

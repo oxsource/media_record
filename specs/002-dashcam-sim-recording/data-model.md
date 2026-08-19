@@ -2,7 +2,7 @@
 
 **Branch**: `002-dashcam-sim-recording` | **Date**: 2026-08-18 | **Spec**: [spec.md](spec.md)
 
-本 feature 无持久化数据；「数据模型」描述**运行期传递的媒体/事件数据**、**录制会话状态**与**默认配置模型**。
+本 feature 无持久化数据；「数据模型」描述**运行期传递的媒体/事件数据**、**录制会话状态**与**图配置模型**。
 
 ## 1. Simulated Frame（模拟视频帧）
 
@@ -32,7 +32,7 @@
 | timestamp_us | int64 | 事件发生时刻 |
 | payload | optional | 本期不使用（扩展点） |
 
-**来源**：`SignalSourceNode` 周期性产出；经 `signal` tag 旁路输入 `UiOverlayNode`（本期 OSD 只渲染时间戳，事件可忽略）。
+**来源**：`SignalSourceNode` 周期性产出；经 `signals` stream 旁路输入 `UiOverlayNode`（本期 OSD 只渲染时间戳，事件可忽略）。
 
 ## 4. Recording Session（录制会话）
 
@@ -52,23 +52,24 @@
 
 | 字段 | 类型 | 约束 / 规则 |
 |------|------|-------------|
-| payload | variant | `VideoFrame`（RGBA）/ `VideoPacket`（H.264 Annex-B）/ `SignalEvent` |
-| stream_name | string | 图内全局唯一（对齐 `streams[].name`） |
-| pts_us | int64 | 帧序号 × 1e6 / fps（编码时间戳） |
+| payload | 任意 C++ 类型 | 本期载荷：`video::codec::VideoFrame`（RGBA）/ `video::codec::VideoPacket`（H.264 Annex-B）/ `SignalEvent` |
+| timestamp | `graph::runtime::Timestamp` | 帧序号驱动的递增时间戳（`Packet::MakePacket<T>().At(ts)`） |
+| routing | stream 名（`"port:stream"` 冒号后） | 图内全局唯一；由 `PipelineRunner` 按 stream 路由，节点只读写自己声明的端口 |
 
-**规则**：单消费者语义；`pipeline_runner` 按 `streams[]` 路由；节点只读写自己声明的 input/output 流。
+**类型**：`graph::runtime::Packet`（graph_runtime 公共面类型，非 media_record 自有）。**规则**：单消费者语义；`PipelineRunner` 按 `GraphConfig` 的 stream 声明路由；节点只读写自己声明的 input/output 端口。
 
-## 6. 默认配置模型（dashcam_record.json）
+## 6. 图配置模型（GraphConfig）
 
 | 项 | 值 |
 |----|-----|
+| 配置类型 | `graph::runtime::GraphConfig`（graph_runtime 唯一配置模型；JSON 为其 schema，media_record 最小读取器产出该类型，不定义新 schema） |
 | 节点 | 7 个实例（1×StreamInput + 1×SignalSource + Layout + Overlay + Encoder + Recorder + Muxer） |
-| 输入图片 | `src/examples/assets/dashcam_default.png` |
+| 输入图片 | `src/examples/assets/dashcam_default.png`（入口 CLI/默认值注入 `NodeDef.options`） |
 | 分辨率 | 跟随输入图片 |
-| 时长 / 帧率 | 10s / 30fps |
-| 输出 | `out/dashcam.mp4` |
+| 时长 / 帧率 | 10s / 30fps（`frame_count = duration × fps`） |
+| 输出 | `out/dashcam.mp4`（入口 CLI/默认值注入） |
 
-**校验规则**：节点名唯一、type 已注册、stream 引用合法、port tag 匹配（复用 001 `pipeline_config_test` 校验器）。
+**校验规则**：节点名唯一、type 已注册、stream 引用合法、无环（复用 graph_runtime `ConfigValidator` 语义；`pipeline_config_test` 断言更新为 graph_runtime schema）。
 
 ## 7. 媒体格式链
 

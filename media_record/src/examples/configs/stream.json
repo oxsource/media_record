@@ -3,8 +3,7 @@
     {
       "name": "source",
       "type": "StreamInputNode",
-      "output_streams": ["output:src_frames"],
-      "options": { "source": "image:front.jpg", "width": 1280, "height": 720, "fps": 30 }
+      "output_streams": ["output:src_frames"]
     },
     {
       "name": "encoder",
@@ -17,9 +16,5 @@
       "type": "StreamSinkNode",
       "input_streams": ["input:es_packets"]
     }
-  ],
-  "streams": [
-    { "name": "src_frames", "source_node": "source", "source_port": "output", "dest_node": "encoder", "dest_port": "input" },
-    { "name": "es_packets", "source_node": "encoder", "source_port": "output", "dest_node": "stream_sink", "dest_port": "input" }
   ]
 }

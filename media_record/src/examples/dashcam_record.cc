@@ -2,10 +2,13 @@
 //
 //   bazel run //src/examples:dashcam_record
 //
-// Loads the default single-cam config (dashcam_record.json), runs the recorder
-// pipeline for the default 10s at 30fps, and writes out/dashcam.mp4. Overwrites
-// an existing output with a log notice; any failure prints a locatable error to
-// stderr and exits non-zero without leaving a partial artifact (FR-008/009).
+// Loads the default single-cam config (dashcam_record.json, graph_runtime
+// JSON schema), injects node params (image/output/fps/duration) programmatically
+// into GraphConfig::NodeDef::options, and runs the recorder pipeline through the
+// sync driver (src/framework/runner) for the default 10s at 30fps, writing
+// out/dashcam.mp4. Overwrites an existing output with a log notice; any failure
+// prints a locatable error to stderr and exits non-zero without leaving a
+// partial artifact (FR-008/009).
 //
 // Exit codes: 0 success; 1 runtime failure (input/output/encode/mux);
 //            2 argument error.
@@ -13,15 +16,16 @@
 #include <cerrno>
 #include <cstdio>
 #include <cstdlib>
+#include <memory>
 #include <string>
 #include <sys/stat.h>
 #include <unistd.h>
 
-#include "media_record/node.h"
 #include "native_ui/render.h"
-#include "src/framework/config/pipeline_config.h"
-#include "src/framework/transport/pipeline_runner.h"
-#include "src/framework/transport/recording_defaults.h"
+#include "src/framework/config/config_validator.h"
+#include "src/framework/config/json/json_parser.h"
+#include "src/framework/node/node_registry.h"
+#include "src/framework/runner/pipeline_runner.h"
 
 namespace {
 
@@ -55,16 +59,11 @@ bool MkdirParents(const std::string& path) {
 }  // namespace
 
 int main(int argc, char** argv) {
-  using media::record::NodeRegistry;
-  using media::record::NodeStatus;
+  using media::record::ApplyRecordingOptions;
+  using media::record::Defaults;
   using media::record::PipelineRunner;
   using media::record::RecordingDefaults;
-  using media::record::Defaults;
-  using media::record::config::CheckRegisteredTypes;
-  using media::record::config::ConfigStatus;
-  using media::record::config::LoadPipelineConfigFile;
-  using media::record::config::PipelineConfig;
-  using media::record::config::ValidatePipelineConfig;
+  using media::record::RunnerError;
 
   std::string config_path = "src/examples/configs/dashcam_record.json";
   std::string image_path = "src/examples/assets/dashcam_default.png";
@@ -131,29 +130,37 @@ int main(int argc, char** argv) {
     return 1;
   }
 
-  PipelineConfig config;
-  ConfigStatus status = LoadPipelineConfigFile(config_path, &config);
-  if (!status.ok) {
-    std::fprintf(stderr, "error: %s\n", status.message.c_str());
-    return 1;
+  // Parse the pipeline template with graph_runtime's own JSON parser.
+  graph::runtime::JsonParser parser;
+  auto parsed = parser.Parse(config_path);
+  if (!parsed.ok()) {
+    std::fprintf(stderr, "error: cannot parse '%s': %s\n", config_path.c_str(),
+                 parsed.status().ToString().c_str());
+    return 2;
   }
-  status = ValidatePipelineConfig(config);
-  if (!status.ok) {
-    std::fprintf(stderr, "error: %s\n", status.message.c_str());
-    return 1;
+  graph::runtime::GraphConfig config = std::move(*parsed);
+  const absl::Status validation = graph::runtime::ConfigValidator::Validate(config);
+  if (!validation.ok()) {
+    std::fprintf(stderr, "error: %s\n", validation.ToString().c_str());
+    return 2;
   }
-  status = CheckRegisteredTypes(config, [](const std::string& type) {
-    return NodeRegistry::Instance().Contains(type);
-  });
-  if (!status.ok) {
-    std::fprintf(stderr, "error: %s\n", status.message.c_str());
-    return 1;
+  for (const auto& def : config.nodes) {
+    if (!graph::runtime::NodeFactoryRegistry::IsRegistered(def.type)) {
+      std::fprintf(stderr, "error: node '%s': type '%s' is not registered\n",
+                   def.name.c_str(), def.type.c_str());
+      return 2;
+    }
   }
 
-  const int frames =
-      frames_override > 0 ? frames_override : d.duration_seconds * d.fps;
-  PipelineRunner runner(config, frames);
-  NodeStatus run = runner.Run();
+  // Node params are programmatic (CLI/defaults), not part of the config JSON.
+  ApplyRecordingOptions(&config, d);
+
+  const int frames = frames_override > 0 ? frames_override
+                                         : d.duration_seconds * d.fps;
+  // Pace ~30fps so the default 10s recording takes ~10s wall clock.
+  const int64_t frame_interval_us = frames_override > 0 ? 0 : 1000000LL / d.fps;
+  PipelineRunner runner(config, frames, frame_interval_us);
+  RunnerError run = runner.Run();
   if (!run.ok) {
     std::fprintf(stderr, "error: %s\n", run.message.c_str());
     return 1;

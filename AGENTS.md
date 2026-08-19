@@ -11,8 +11,22 @@ node types as real implementations (StreamInput / SignalSource / MultiViewLayout
 / UiOverlay / VideoEncoder / Recorder / MuxerSink) + a config-driven synchronous
 pipeline runner + recording entry. Default run: `bazel run //src/examples:dashcam_record`
 (10s, 30fps, image + real-clock OSD timestamp -> out/dashcam.mp4).
+
+Execution model (2026-08-18 redesign): the 7 node types are `graph::runtime::Node`
+subclasses registered via GRAPH_RUNTIME_REGISTER_NODE; graph topology lives ONLY in
+graph_runtime's `GraphConfig`, parsed by graph_runtime's OWN `JsonParser`
+(@graph_runtime//src/framework/config/json:json_parser, exported via the public
+runtime target; no media_record-owned config module/parser, no
+framework/transport/ frame-transport layer); a thin sync driver in
+`src/framework/runner/` runs the graph on the calling thread via GraphContext
+Open/Process/Close + Packet routing (same pattern as graph_runtime's own
+src/examples/string_pipeline.cc — note GraphRuntime's executor class does NOT wire
+internal node-to-node streams). Node params (image/output/fps/duration) are injected
+programmatically into NodeDef.options by the entry (graph_runtime JsonParser ignores
+per-node options).
+
 Dependencies:
-- graph_runtime: /Users/moks/Develop/docker/ubuntu24/codes/graph_runtime/graph_runtime -> @graph_runtime//src/framework/public:runtime (value types/schema only)
+- graph_runtime: /Users/moks/Develop/docker/ubuntu24/codes/graph_runtime/graph_runtime -> @graph_runtime//src/framework/public:runtime (Node/NodeRegistry/GraphContext/Packet/Timestamp/GraphConfig/ConfigValidator — full runtime public umbrella, same single-target dep as graph_runtime's own examples)
 - native_ui:     /Users/moks/Develop/docker/ubuntu24/codes/native_ui/native_ui     -> @native_ui//:native_ui (Image decode + flex layout: Container/ExternalImage/Text)
 - video_codec:   /Users/moks/Develop/docker/ubuntu24/codes/video_codec/codec       -> @video_codec//src/framework/public:video_codec (VideoEncoder H.264 + Muxer MP4)
 Encode + MP4 mux both reuse video_codec's public umbrella (VideoEncoder + Muxer via ByteSink/FileByteSink);

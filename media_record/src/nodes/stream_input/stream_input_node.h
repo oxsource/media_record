@@ -2,28 +2,40 @@
 #define MEDIA_RECORD_NODES_STREAM_INPUT_STREAM_INPUT_NODE_H_
 
 #include <cstdint>
+#include <string>
 #include <vector>
 
-#include "src/framework/transport/stream_node.h"
+#include "src/framework/node/node.h"
 
 // StreamInputNode (spec 002): simulates a camera input from a static image.
 //
-// Open() decodes the configured default image (RecordingDefaults::input_image)
-// into an RGBA buffer; each Process() emits one Packet<VideoFrame> on
-// "frames" with a real-clock timestamp and a monotonic presentation time.
-// Stops producing once the output stream is marked EOS (end of recording).
+// graph_runtime source node (no input ports): Open() decodes the configured
+// image (NodeOptions "image") into an RGBA buffer; each Process() emits one
+// Packet<video::codec::VideoFrame> on port "output" (stream "output:frames")
+// with a real-clock timestamp, and returns StatusStop() once the frame budget
+// (NodeOptions "frame_count") is exhausted.
 
 namespace media::record {
 
-class StreamInputNode : public StreamNode {
+class StreamInputNode : public graph::runtime::Node {
  public:
-  NodeStatus Open() override;
-  NodeStatus Process() override;
+  StreamInputNode(const std::string& name,
+                  const graph::runtime::NodeOptions& options);
+
+  static absl::Status GetContract(graph::runtime::NodeContract* c);
+
+  absl::Status Open(graph::runtime::GraphContext& ctx) override;
+  absl::Status Close(graph::runtime::GraphContext& ctx) override;
+  absl::Status Process(graph::runtime::GraphContext& ctx) override;
 
  private:
-  std::vector<uint8_t> image_;  // decoded RGBA pixels
-  int width_ = 0;
+  std::string image_path_;
+  int width_ = 0;   // 0 = follow the input image
   int height_ = 0;
+  int fps_ = 30;
+  int64_t frame_count_ = 300;
+
+  std::vector<uint8_t> image_;  // decoded RGBA pixels
   int64_t frame_index_ = 0;
 };
 

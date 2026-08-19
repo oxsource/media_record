@@ -1,11 +1,12 @@
 // End-to-end recording test (spec 002, T021) + failure-path tests (T027).
 //
-// Drives the full 7-node recorder pipeline with the real dashcam_record.json
-// topology but a short 2s / 60-frame budget and a temp output file, then
-// asserts a playable MP4 was produced (ftyp/moov/mdat present, non-trivial
-// size, no leftover temp file). The failure tests verify that missing input,
-// unwritable output, and an encoder failure each produce a locatable error
-// (path / node name) and leave no partial artifact (FR-008/009).
+// Drives the full 7-node recorder pipeline (graph_runtime nodes) with the real
+// dashcam_record.json topology (graph_runtime JSON schema) but a short 2s /
+// 60-frame budget and a temp output file, then asserts a playable MP4 was
+// produced (ftyp/moov/mdat present, non-trivial size, no leftover temp file).
+// The failure tests verify that missing input, unwritable output, and an
+// encoder failure each produce a locatable error (path / node name) and leave
+// no partial artifact (FR-008/009).
 
 #include <cstdint>
 #include <cstdio>
@@ -17,11 +18,10 @@
 #include <zlib.h>
 
 #include "gtest/gtest.h"
-#include "media_record/node.h"
 #include "native_ui/render.h"
-#include "src/framework/config/pipeline_config.h"
-#include "src/framework/transport/pipeline_runner.h"
-#include "src/framework/transport/recording_defaults.h"
+#include "src/framework/config/json/json_parser.h"
+#include "src/framework/runner/pipeline_runner.h"
+#include "src/framework/runner/recording_defaults.h"
 
 namespace media::record {
 namespace {
@@ -67,12 +67,15 @@ bool HasBytes(const std::string& path, const char* magic, size_t len) {
 }
 
 // Resets the process-wide defaults and sets the common success-path values.
-void SetDefaults(const std::string& image, const std::string& output) {
+// Node options are injected into the GraphConfig by ApplyRecordingOptions
+// (params are programmatic, not part of the config JSON).
+void SetDefaults(const std::string& image, const std::string& output,
+                 int duration_seconds = 2) {
   RecordingDefaults& d = Defaults();
   d = RecordingDefaults();  // reset to built-in defaults
   d.input_image = image;
   d.output_file = output;
-  d.duration_seconds = 2;
+  d.duration_seconds = duration_seconds;
   d.fps = 30;
   std::unique_ptr<native::ui::Image> img =
       native::ui::Image::FromFile(image.c_str());
@@ -81,12 +84,12 @@ void SetDefaults(const std::string& image, const std::string& output) {
   d.height = img->height();
 }
 
-config::PipelineConfig LoadConfig() {
-  config::PipelineConfig config;
-  config::ConfigStatus status = config::LoadPipelineConfigFile(
-      Runfile("src/examples/configs/dashcam_record.json"), &config);
-  EXPECT_TRUE(status.ok) << status.message;
-  return config;
+graph::runtime::GraphConfig LoadConfig() {
+  graph::runtime::JsonParser parser;
+  auto parsed =
+      parser.Parse(Runfile("src/examples/configs/dashcam_record.json"));
+  EXPECT_TRUE(parsed.ok()) << parsed.status();
+  return parsed.ok() ? std::move(*parsed) : graph::runtime::GraphConfig{};
 }
 
 // Writes a tiny solid-color PNG with the given dimensions (stdlib only).
@@ -146,8 +149,10 @@ TEST(DashcamRecordTest, RecordsPlayableMp4) {
   std::remove((output + ".tmp").c_str());
   SetDefaults(Runfile("src/examples/assets/dashcam_default.png"), output);
 
-  PipelineRunner runner(LoadConfig(), 60);
-  NodeStatus run = runner.Run();
+  graph::runtime::GraphConfig config = LoadConfig();
+  ApplyRecordingOptions(&config, Defaults());
+  PipelineRunner runner(std::move(config), 60);
+  RunnerError run = runner.Run();
   ASSERT_TRUE(run.ok) << run.message;
 
   EXPECT_TRUE(HasBytes(output, "ftyp", 4));
@@ -175,8 +180,10 @@ TEST(DashcamRecordTest, MissingInputImageFailsWithPath) {
   d.fps = 30;
   std::remove(output.c_str());
 
-  PipelineRunner runner(LoadConfig(), 60);
-  NodeStatus run = runner.Run();
+  graph::runtime::GraphConfig config = LoadConfig();
+  ApplyRecordingOptions(&config, d);
+  PipelineRunner runner(std::move(config), 60);
+  RunnerError run = runner.Run();
   ASSERT_FALSE(run.ok);
   EXPECT_NE(run.message.find(missing), std::string::npos)
       << "error must contain the input path: " << run.message;
@@ -189,8 +196,10 @@ TEST(DashcamRecordTest, UnwritableOutputFailsWithPath) {
       "/nonexistent_dir_xyz/out/sub/dashcam.mp4";  // parent does not exist
   SetDefaults(Runfile("src/examples/assets/dashcam_default.png"), output);
 
-  PipelineRunner runner(LoadConfig(), 60);
-  NodeStatus run = runner.Run();
+  graph::runtime::GraphConfig config = LoadConfig();
+  ApplyRecordingOptions(&config, Defaults());
+  PipelineRunner runner(std::move(config), 60);
+  RunnerError run = runner.Run();
   ASSERT_FALSE(run.ok);
   EXPECT_NE(run.message.find("muxer_sink"), std::string::npos);
   EXPECT_NE(run.message.find(output), std::string::npos)
@@ -208,8 +217,10 @@ TEST(DashcamRecordTest, EncodeFailureLeavesNoPartialArtifact) {
   std::remove(output.c_str());
   std::remove((output + ".tmp").c_str());
 
-  PipelineRunner runner(LoadConfig(), 60);
-  NodeStatus run = runner.Run();
+  graph::runtime::GraphConfig config = LoadConfig();
+  ApplyRecordingOptions(&config, Defaults());
+  PipelineRunner runner(std::move(config), 60);
+  RunnerError run = runner.Run();
   ASSERT_FALSE(run.ok);
   EXPECT_NE(run.message.find("video_encoder"), std::string::npos)
       << run.message;

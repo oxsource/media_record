@@ -4,28 +4,42 @@
 
 #include "native_ui/surface.h"
 #include "native_ui/widgets.h"
-#include "src/framework/transport/packet.h"
+#include "src/framework/node/graph_context.h"
+#include "src/framework/node/node_contract.h"
+#include "src/framework/node/node_options.h"
+#include "src/framework/node/node_registry.h"
+#include "src/framework/stream/packet.h"
 #include "video_codec/video_codec.h"
 
 namespace media::record {
 
-NodeStatus MultiViewLayoutNode::Process() {
-  StreamBuffer* in = Input("frames");
-  StreamBuffer* out = Output("view_frames");
-  if (in == nullptr || out == nullptr) {
-    return NodeStatus{false,
-                      "multi_view_layout: missing input 'frames' or output "
-                      "'view_frames'"};
-  }
+MultiViewLayoutNode::MultiViewLayoutNode(
+    const std::string& name, const graph::runtime::NodeOptions& options)
+    : Node(name) {}
 
-  Packet pkt;
-  if (!in->Pop(&pkt)) return NodeStatus{};  // nothing to lay out this pass
-  if (!pkt.IsFrame()) {
-    return NodeStatus{false,
-                      "multi_view_layout: unexpected non-frame packet on 'frames'"};
+absl::Status MultiViewLayoutNode::GetContract(graph::runtime::NodeContract* c) {
+  c->Inputs().Get("f").Set<video::codec::VideoFrame>();
+  c->Outputs().Get("output").Set<video::codec::VideoFrame>();
+  return absl::OkStatus();
+}
+
+absl::Status MultiViewLayoutNode::Open(graph::runtime::GraphContext&) {
+  return absl::OkStatus();
+}
+
+absl::Status MultiViewLayoutNode::Close(graph::runtime::GraphContext&) {
+  return absl::OkStatus();
+}
+
+absl::Status MultiViewLayoutNode::Process(graph::runtime::GraphContext& ctx) {
+  auto& in = ctx.Inputs().Get("f");
+  if (in.IsEmpty()) return absl::OkStatus();  // nothing to lay out this pass
+  auto frame_or = in.Value().Share<video::codec::VideoFrame>();
+  if (!frame_or.ok()) {
+    return absl::InvalidArgumentError(
+        "multi_view_layout: unexpected non-frame packet on 'f'");
   }
-  const video::codec::VideoFrame& frame =
-      std::get<video::codec::VideoFrame>(pkt.payload());
+  const video::codec::VideoFrame& frame = **frame_or;
 
   // Flex composition: the ExternalImage is the base layer covering the whole
   // canvas (single view). Measured bounds confirm full-frame coverage; the
@@ -55,14 +69,15 @@ NodeStatus MultiViewLayoutNode::Process() {
   out_frame.planes[0] = frame.planes[0];  // copies pixels (frame fills canvas)
   out_frame.timestamp_us = frame.timestamp_us;
 
-  Packet out_pkt("view_frames", std::move(out_frame), pkt.pts_us());
-  if (!out->Push(std::move(out_pkt))) {
-    return NodeStatus{false, "multi_view_layout: output buffer full or EOS"};
-  }
   (void)region;  // bounds used implicitly: full-frame coverage for single view
-  return NodeStatus{};
+  auto pkt = graph::runtime::Packet::MakePacket<video::codec::VideoFrame>(
+                 std::move(out_frame))
+                 .At(in.Value().timestamp());
+  ctx.Outputs().Get("output").AddPacket(std::move(pkt));
+  return absl::OkStatus();
 }
 
-REGISTER_NODE("MultiViewLayoutNode", MultiViewLayoutNode);
+namespace { using media::record::MultiViewLayoutNode; }
+GRAPH_RUNTIME_REGISTER_NODE("MultiViewLayoutNode", MultiViewLayoutNode);
 
 }  // namespace media::record

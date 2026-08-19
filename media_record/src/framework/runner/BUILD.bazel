@@ -1,0 +1,28 @@
+package(default_visibility = ["//visibility:public"])
+
+# Sync frame-loop driver over graph_runtime nodes (spec 002).
+#
+# Execution = graph_runtime node types driven on the calling thread through
+# GraphContext Open/Process/Close with Packet routing by stream name — the same
+# pattern as graph_runtime's own src/examples/string_pipeline.cc (the
+# GraphRuntime executor class does NOT wire internal node-to-node streams;
+# contracts/dependency-contract.md D-6). Topology comes ONLY from
+# graph_runtime's GraphConfig, parsed by graph_runtime's own JsonParser
+# (@graph_runtime//src/framework/config/json:json_parser, re-exported by the
+# public runtime target); this module defines no parser and no config schema.
+#
+# Node params (image/output/fps/duration) are injected programmatically into
+# NodeDef.options by the recording entry (ApplyRecordingOptions) — graph_runtime
+# JsonParser intentionally ignores per-node options.
+cc_library(
+    name = "runner",
+    srcs = ["pipeline_runner.cc"],
+    hdrs = [
+        "pipeline_runner.h",
+        "recording_defaults.h",
+    ],
+    deps = [
+        "@graph_runtime//src/framework/public:runtime",
+    ],
+    visibility = ["//visibility:public"],
+)

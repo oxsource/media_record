@@ -1,14 +1,15 @@
 package(default_visibility = ["//visibility:public"])
 
-# Pipeline template validation (spec 001 US3, task T025).
+# Pipeline template validation (spec 001 US3, task T025; spec 002: templates
+# are graph_runtime JSON schema parsed by graph_runtime's JsonParser).
 cc_test(
     name = "pipeline_config_test",
     size = "small",
     srcs = ["pipeline_config_test.cc"],
     data = ["//src/examples/configs:configs"],
     deps = [
-        "//src/framework/config:config",
         "@com_google_googletest//:gtest_main",
+        "@graph_runtime//src/framework/public:runtime",
     ],
 )
 
@@ -30,20 +31,16 @@ cc_test(
     ],
 )
 
-# Frame-transport runner unit test (spec 002, Phase 2 foundation).
+# Sync-runner unit tests (spec 002, Phase 2 foundation): stub graph_runtime
+# nodes driven by PipelineRunner over a GraphConfig.
 cc_test(
     name = "pipeline_runner_test",
     size = "small",
     srcs = ["pipeline_runner_test.cc"],
-    data = ["@ffmpeg//:ffmpeg_codec_archive"],  # ADR-001
-    linkopts = ["-Wl,-force_load,$(execpath @ffmpeg//:ffmpeg_codec_archive)"],
-    linkstatic = True,  # ADR-001: keep FFmpeg statically force-loaded
     deps = [
-        "//src/framework/config:config",
-        "//src/framework/public:media_record",
-        "//src/framework/transport:transport",
+        "//src/framework/runner:runner",
         "@com_google_googletest//:gtest_main",
-        "@video_codec//src/framework/public:video_codec",
+        "@graph_runtime//src/framework/public:runtime",
     ],
 )
 
@@ -69,7 +66,8 @@ cc_test(
     ],
 )
 
-# Source-node unit tests (spec 002, T010).
+# Source-node unit tests (spec 002, T010): graph_runtime nodes driven through
+# a GraphContext directly (string_pipeline.cc pattern).
 cc_test(
     name = "source_nodes_test",
     size = "small",
@@ -81,17 +79,18 @@ cc_test(
     linkopts = ["-Wl,-force_load,$(execpath @ffmpeg//:ffmpeg_codec_archive)"],
     linkstatic = True,  # ADR-001: keep FFmpeg statically force-loaded
     deps = [
-        "//src/framework/public:media_record",
-        "//src/framework/transport:transport",
+        "//src/nodes/signal_source:signal_event",
         "//src/nodes/signal_source:signal_source",
         "//src/nodes/stream_input:stream_input",
         "@com_google_googletest//:gtest_main",
+        "@graph_runtime//src/framework/public:runtime",
+        "@native_ui//:native_ui",
         "@video_codec//src/framework/public:video_codec",
     ],
 )
 
-# End-to-end recording test (spec 002, T021): runs the real 7-node pipeline
-# with a short budget and asserts a playable MP4.
+# End-to-end recording test (spec 002, T021): runs the real 7-node graph_runtime
+# pipeline with a short budget and asserts a playable MP4.
 cc_test(
     name = "dashcam_record_test",
     size = "medium",
@@ -107,9 +106,7 @@ cc_test(
     # dropped (avcodec_find_encoder crashes at runtime).
     linkstatic = True,
     deps = [
-        "//src/framework/config:config",
-        "//src/framework/public:media_record",
-        "//src/framework/transport:transport",
+        "//src/framework/runner:runner",
         "//src/nodes/multi_view_layout:multi_view_layout",
         "//src/nodes/muxer_sink:muxer_sink",
         "//src/nodes/recorder:recorder",
@@ -118,6 +115,7 @@ cc_test(
         "//src/nodes/ui_overlay:ui_overlay",
         "//src/nodes/video_encoder:video_encoder",
         "@com_google_googletest//:gtest_main",
+        "@graph_runtime//src/framework/public:runtime",
         "@native_ui//:native_ui",
         "@video_codec//src/framework/public:video_codec",
     ],

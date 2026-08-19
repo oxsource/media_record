@@ -19,6 +19,8 @@ bazel run //src/examples:dashcam_record
 
 预期：运行约 10 秒后退出码 0，生成 `out/dashcam.mp4`（H.264 + MP4，含输入图片与逐帧递增的时间戳）。
 
+执行模型：7 类节点为 `graph::runtime::Node`（经 `GRAPH_RUNTIME_REGISTER_NODE` 注册），拓扑存于 graph_runtime `GraphConfig`（JSON 为其 schema，`"port:stream"` 命名），由 `src/framework/runner/` 同步驱动器在调用线程上驱动（对齐 graph_runtime `src/examples/string_pipeline.cc` 模式）。
+
 ## 产物检查
 
 ```bash

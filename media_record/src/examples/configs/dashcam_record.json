@@ -1,11 +1,9 @@
 {
-  "max_queue_size": 100,
   "nodes": [
     {
       "name": "input",
       "type": "StreamInputNode",
-      "output_streams": ["output:frames"],
-      "options": { "source": "image:src/examples/assets/dashcam_default.png", "width": 1280, "height": 720, "fps": 30 }
+      "output_streams": ["output:frames"]
     },
     {
       "name": "signals",
@@ -41,13 +39,5 @@
       "type": "MuxerSinkNode",
       "input_streams": ["input:clips"]
     }
-  ],
-  "streams": [
-    { "name": "frames", "source_node": "input", "source_port": "output", "dest_node": "layout", "dest_port": "f" },
-    { "name": "signals", "source_node": "signals", "source_port": "output", "dest_node": "overlay", "dest_port": "signal" },
-    { "name": "view_frames", "source_node": "layout", "source_port": "output", "dest_node": "overlay", "dest_port": "video" },
-    { "name": "osd_frames", "source_node": "overlay", "source_port": "output", "dest_node": "encoder", "dest_port": "input" },
-    { "name": "es_packets", "source_node": "encoder", "source_port": "output", "dest_node": "recorder", "dest_port": "input" },
-    { "name": "clips", "source_node": "recorder", "source_port": "output", "dest_node": "muxer", "dest_port": "input" }
   ]
 }

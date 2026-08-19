@@ -3,8 +3,11 @@
 #include <string>
 #include <utility>
 
-#include "src/framework/transport/packet.h"
-#include "src/framework/transport/recording_defaults.h"
+#include "src/framework/node/graph_context.h"
+#include "src/framework/node/node_contract.h"
+#include "src/framework/node/node_options.h"
+#include "src/framework/node/node_registry.h"
+#include "src/framework/stream/packet.h"
 #include "src/nodes/video_encoder/rgba_i420.h"
 
 namespace media::record {
@@ -17,17 +20,17 @@ std::string StatusName(video::codec::Status s) {
 
 }  // namespace
 
-// Forwards every encoded packet into the "es_packets" StreamBuffer. Push mode
-// guarantees no packets are dropped on Flush (pull mode returns only the last
-// drained packet).
-class VideoEncoderNode::StreamBufferSink : public video::codec::PacketSink {
+// Collects encoded packets from the push-mode encoder into the node's pending_
+// list; Process() emits them into the output shard afterwards.
+class VideoEncoderNode::PacketSinkAdapter : public video::codec::PacketSink {
  public:
-  explicit StreamBufferSink(StreamBuffer* out) : out_(out) {}
+  explicit PacketSinkAdapter(VideoEncoderNode* node) : node_(node) {}
 
   video::codec::Status Push(video::codec::VideoPacket&& pkt) override {
-    media::record::Packet p("es_packets", std::move(pkt));
-    return out_->Push(std::move(p)) ? video::codec::Status::kOk
-                                    : video::codec::Status::kEncodeFailed;
+    node_->pending_.push_back(
+        graph::runtime::Packet::MakePacket<video::codec::VideoPacket>(
+            std::move(pkt)));
+    return video::codec::Status::kOk;
   }
 
   video::codec::Status Push(video::codec::AudioPacket&&) override {
@@ -35,59 +38,77 @@ class VideoEncoderNode::StreamBufferSink : public video::codec::PacketSink {
   }
 
  private:
-  StreamBuffer* out_;
+  VideoEncoderNode* node_;
 };
 
-NodeStatus VideoEncoderNode::EnsureEncoder(const video::codec::VideoFrame& frame) {
-  if (encoder_) return NodeStatus{};
-  StreamBuffer* out = Output("es_packets");
-  if (out == nullptr) {
-    return NodeStatus{false, "video_encoder: missing output stream 'es_packets'"};
-  }
+VideoEncoderNode::VideoEncoderNode(
+    const std::string& name, const graph::runtime::NodeOptions& options)
+    : Node(name) {
+  if (const int* v = options.Get<int>("fps")) fps_ = *v;
+  if (const int* v = options.Get<int>("bitrate")) bitrate_ = *v;
+  if (fps_ <= 0) fps_ = 30;
+  if (bitrate_ <= 0) bitrate_ = 4'000'000;
+}
+
+absl::Status VideoEncoderNode::GetContract(graph::runtime::NodeContract* c) {
+  c->Inputs().Get("input").Set<video::codec::VideoFrame>();
+  c->Outputs().Get("output").Set<video::codec::VideoPacket>();
+  return absl::OkStatus();
+}
+
+absl::Status VideoEncoderNode::EnsureEncoder(
+    const video::codec::VideoFrame& frame) {
+  if (encoder_) return absl::OkStatus();
 
   video::codec::VideoConfig cfg;
   cfg.codec = video::codec::VideoCodecType::kH264;
   cfg.width = frame.width;
   cfg.height = frame.height;
-  cfg.fps = Defaults().fps > 0 ? Defaults().fps : 30;
-  cfg.bitrate = Defaults().bitrate > 0 ? Defaults().bitrate : 4'000'000;
+  cfg.fps = fps_;
+  cfg.bitrate = bitrate_;
   cfg.input_format = video::codec::PixelFormat::kI420;
   cfg.backend = video::codec::Backend::kAuto;
 
   encoder_ = video::codec::CodecFactory::CreateVideo(cfg);
   if (!encoder_) {
-    return NodeStatus{false, "video_encoder: video encoder unavailable (no backend)"};
+    return absl::InternalError(
+        "video_encoder: video encoder unavailable (no backend)");
   }
   if (encoder_->Init() != video::codec::Status::kOk) {
-    return NodeStatus{false, "video_encoder: encoder Init failed"};
+    return absl::InternalError("video_encoder: encoder Init failed");
   }
-  sink_ = std::make_unique<StreamBufferSink>(out);
+  sink_ = std::make_unique<PacketSinkAdapter>(this);
   if (encoder_->SetOutputSink(sink_.get()) != video::codec::Status::kOk) {
-    return NodeStatus{false, "video_encoder: push-mode wiring failed"};
+    return absl::InternalError("video_encoder: push-mode wiring failed");
   }
-  return NodeStatus{};
+  return absl::OkStatus();
 }
 
-NodeStatus VideoEncoderNode::Process() {
-  StreamBuffer* in = Input("osd_frames");
-  StreamBuffer* out = Output("es_packets");
-  if (in == nullptr || out == nullptr) {
-    return NodeStatus{false,
-                      "video_encoder: missing input 'osd_frames' or output "
-                      "'es_packets'"};
+void VideoEncoderNode::EmitPending(graph::runtime::GraphContext& ctx) {
+  if (pending_.empty()) return;
+  auto& out = ctx.Outputs().Get("output");
+  for (auto& pkt : pending_) {
+    out.AddPacket(std::move(pkt));
   }
+  pending_.clear();
+}
 
-  Packet pkt;
-  if (in->Pop(&pkt)) {
-    if (!pkt.IsFrame()) {
-      return NodeStatus{false,
-                        "video_encoder: unexpected non-frame packet on 'osd_frames'"};
+absl::Status VideoEncoderNode::Open(graph::runtime::GraphContext&) {
+  return absl::OkStatus();
+}
+
+absl::Status VideoEncoderNode::Process(graph::runtime::GraphContext& ctx) {
+  auto& in = ctx.Inputs().Get("input");
+  if (!in.IsEmpty()) {
+    auto frame_or = in.Value().Share<video::codec::VideoFrame>();
+    if (!frame_or.ok()) {
+      return absl::InvalidArgumentError(
+          "video_encoder: unexpected non-frame packet on 'input'");
     }
-    video::codec::VideoFrame rgba =
-        std::get<video::codec::VideoFrame>(std::move(pkt.payload()));
+    const video::codec::VideoFrame& rgba = **frame_or;
 
-    NodeStatus status = EnsureEncoder(rgba);
-    if (!status.ok) return status;
+    absl::Status status = EnsureEncoder(rgba);
+    if (!status.ok()) return status;
 
     video::codec::VideoFrame i420;
     i420.format = video::codec::PixelFormat::kI420;
@@ -97,8 +118,10 @@ NodeStatus VideoEncoderNode::Process() {
     i420.stride[1] = rgba.width / 2;
     i420.stride[2] = rgba.width / 2;
     i420.planes[0].resize(static_cast<size_t>(rgba.width) * rgba.height);
-    i420.planes[1].resize(static_cast<size_t>(rgba.width / 2) * (rgba.height / 2));
-    i420.planes[2].resize(static_cast<size_t>(rgba.width / 2) * (rgba.height / 2));
+    i420.planes[1].resize(static_cast<size_t>(rgba.width / 2) *
+                          (rgba.height / 2));
+    i420.planes[2].resize(static_cast<size_t>(rgba.width / 2) *
+                          (rgba.height / 2));
     i420.timestamp_us = rgba.timestamp_us;
 
     RgbaToI420({rgba.planes[0].data(), static_cast<size_t>(rgba.stride[0]),
@@ -109,36 +132,35 @@ NodeStatus VideoEncoderNode::Process() {
 
     const auto result = encoder_->Encode(i420);
     if (!result.ok()) {
-      return NodeStatus{false,
-                        "video_encoder: Encode failed (" + StatusName(result.status()) +
-                            ")"};
+      return absl::InternalError("video_encoder: Encode failed (" +
+                                 StatusName(result.status()) + ")");
     }
-    return NodeStatus{};
+    EmitPending(ctx);
   }
 
-  if (in->eos() && !flushed_) {
+  if (in.IsDone() && !flushed_) {
     flushed_ = true;
     if (encoder_) {
       const auto result = encoder_->Flush();
       if (!result.ok()) {
-        return NodeStatus{false,
-                          "video_encoder: Flush failed (" +
-                              StatusName(result.status()) + ")"};
+        return absl::InternalError("video_encoder: Flush failed (" +
+                                   StatusName(result.status()) + ")");
       }
+      EmitPending(ctx);
     }
   }
-  return NodeStatus{};
+  return absl::OkStatus();
 }
 
-NodeStatus VideoEncoderNode::Close() {
+absl::Status VideoEncoderNode::Close(graph::runtime::GraphContext&) {
   if (encoder_) encoder_->Release();
   encoder_.reset();
   sink_.reset();
-  return NodeStatus{};
+  pending_.clear();
+  return absl::OkStatus();
 }
 
-  static int& kDbg() { static int v = 0; return v; }
-
-REGISTER_NODE("VideoEncoderNode", VideoEncoderNode);
+namespace { using media::record::VideoEncoderNode; }
+GRAPH_RUNTIME_REGISTER_NODE("VideoEncoderNode", VideoEncoderNode);
 
 }  // namespace media::record

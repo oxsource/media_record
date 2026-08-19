@@ -1,15 +1,16 @@
-#ifndef MEDIA_RECORD_FRAMEWORK_TRANSPORT_RECORDING_DEFAULTS_H_
-#define MEDIA_RECORD_FRAMEWORK_TRANSPORT_RECORDING_DEFAULTS_H_
+#ifndef MEDIA_RECORD_FRAMEWORK_RUNNER_RECORDING_DEFAULTS_H_
+#define MEDIA_RECORD_FRAMEWORK_RUNNER_RECORDING_DEFAULTS_H_
 
 #include <string>
 
-// Runtime defaults shared by the recording pipeline nodes (spec 002).
+// Runtime defaults shared by the recording pipeline (spec 002).
 //
-// The recording entry (src/examples/dashcam_record.cc) populates these before
-// running; tests override them. Configurable recording parameters (duration /
-// input image / output path / timestamp format) are a later-proposal feature
-// (spec FR-005/006/007), so this feature runs on defaults only — the 001
-// PipelineConfig parser does not carry node options.
+// These are PROGRAMMATIC runtime parameters, not a config schema: the graph
+// topology lives only in graph_runtime's GraphConfig (contracts/pipeline-
+// contract.md §2); the recording entry fills these defaults from CLI flags /
+// decoded input-image dimensions and injects them into each node's
+// NodeOptions before running (graph_runtime JsonParser does not carry per-node
+// options). Tests override them per scenario.
 
 namespace media::record {
 
@@ -34,4 +35,4 @@ inline RecordingDefaults& Defaults() {
 
 }  // namespace media::record
 
-#endif  // MEDIA_RECORD_FRAMEWORK_TRANSPORT_RECORDING_DEFAULTS_H_
+#endif  // MEDIA_RECORD_FRAMEWORK_RUNNER_RECORDING_DEFAULTS_H_

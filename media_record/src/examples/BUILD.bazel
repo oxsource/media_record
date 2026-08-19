@@ -1,14 +1,15 @@
 package(default_visibility = ["//visibility:public"])
 
-# Config-driven example (spec 001 US3): loads a pipeline JSON template and
-# assembles/runs the node graph on the media_record skeleton.
+# Config-driven example (spec 001 US3): loads a pipeline JSON template
+# (graph_runtime schema) and assembles/runs the node graph on the media_record
+# skeleton.
 cc_binary(
     name = "hello_graph",
     srcs = ["hello_graph.cc"],
     data = ["//src/examples/configs:configs"],
     deps = [
         "//:media_record",
-        "//src/framework/config:config",
+        "@graph_runtime//src/framework/public:runtime",
     ],
 )
 
@@ -22,10 +23,12 @@ cc_binary(
     ],
 )
 
-# Dashcam recording entry (spec 002 / T020): loads dashcam_record.json and runs
-# the 7-node recorder pipeline for the default 10s @ 30fps -> out/dashcam.mp4.
-# All node libraries are linked (alwayslink) so their REGISTER_NODE registrations
-# are present for NodeRegistry::Create(type).
+# Dashcam recording entry (spec 002 / T020): loads dashcam_record.json
+# (graph_runtime schema) and runs the 7-node recorder pipeline for the default
+# 10s @ 30fps -> out/dashcam.mp4 through the sync driver
+# (//src/framework/runner). All node libraries are linked (alwayslink) so their
+# GRAPH_RUNTIME_REGISTER_NODE registrations are present for
+# NodeFactoryRegistry::CreateByName(type).
 cc_binary(
     name = "dashcam_record",
     srcs = ["dashcam_record.cc"],
@@ -36,9 +39,7 @@ cc_binary(
     ],
     linkopts = ["-Wl,-force_load,$(execpath @ffmpeg//:ffmpeg_codec_archive)"],
     deps = [
-        "//src/framework/config:config",
-        "//src/framework/public:media_record",
-        "//src/framework/transport:transport",
+        "//src/framework/runner:runner",
         "//src/nodes/multi_view_layout:multi_view_layout",
         "//src/nodes/muxer_sink:muxer_sink",
         "//src/nodes/recorder:recorder",
@@ -46,6 +47,7 @@ cc_binary(
         "//src/nodes/stream_input:stream_input",
         "//src/nodes/ui_overlay:ui_overlay",
         "//src/nodes/video_encoder:video_encoder",
+        "@graph_runtime//src/framework/public:runtime",
         "@native_ui//:native_ui",
     ],
 )

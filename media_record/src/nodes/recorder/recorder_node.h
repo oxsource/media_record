@@ -3,22 +3,28 @@
 
 #include <cstdint>
 
-#include "src/framework/transport/stream_node.h"
+#include "src/framework/node/node.h"
 
 // RecorderNode (spec 002): single-session single-segment recording.
 //
-// Tracks the session lifecycle and forwards every encoded VideoPacket from
-// "es_packets" to "clips" (the muxer input). The frame budget is enforced by
-// the PipelineRunner (duration_seconds x fps); RecorderNode stays a pass-through
-// that counts frames and finalizes the session on Close (data-model.md §4).
+// graph_runtime node: input port "input" (stream "input:es_packets"), output
+// port "output" (stream "output:clips"). Forwards every encoded VideoPacket
+// to the muxer and counts frames; the frame budget is enforced by the source
+// nodes (duration_seconds x fps via NodeOptions "frame_count"), and the
+// session finalizes on Close (data-model.md §4).
 
 namespace media::record {
 
-class RecorderNode : public StreamNode {
+class RecorderNode : public graph::runtime::Node {
  public:
-  NodeStatus Open() override;
-  NodeStatus Process() override;
-  NodeStatus Close() override;
+  RecorderNode(const std::string& name,
+               const graph::runtime::NodeOptions& options);
+
+  static absl::Status GetContract(graph::runtime::NodeContract* c);
+
+  absl::Status Open(graph::runtime::GraphContext& ctx) override;
+  absl::Status Process(graph::runtime::GraphContext& ctx) override;
+  absl::Status Close(graph::runtime::GraphContext& ctx) override;
 
  private:
   int64_t frames_recorded_ = 0;

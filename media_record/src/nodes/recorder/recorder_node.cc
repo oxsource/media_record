@@ -2,48 +2,55 @@
 
 #include <cstdio>
 
-#include "src/framework/transport/packet.h"
+#include "src/framework/node/graph_context.h"
+#include "src/framework/node/node_contract.h"
+#include "src/framework/node/node_options.h"
+#include "src/framework/node/node_registry.h"
+#include "src/framework/stream/packet.h"
+#include "video_codec/video_codec.h"
 
 namespace media::record {
 
-NodeStatus RecorderNode::Open() {
-  frames_recorded_ = 0;
-  finalized_ = false;
-  return NodeStatus{};
+RecorderNode::RecorderNode(const std::string& name,
+                           const graph::runtime::NodeOptions& options)
+    : Node(name) {}
+
+absl::Status RecorderNode::GetContract(graph::runtime::NodeContract* c) {
+  c->Inputs().Get("input").Set<video::codec::VideoPacket>();
+  c->Outputs().Get("output").Set<video::codec::VideoPacket>();
+  return absl::OkStatus();
 }
 
-NodeStatus RecorderNode::Process() {
-  StreamBuffer* in = Input("es_packets");
-  StreamBuffer* out = Output("clips");
-  if (in == nullptr || out == nullptr) {
-    return NodeStatus{false, "recorder: missing input 'es_packets' or output "
-                             "'clips'"};
-  }
-
-  Packet pkt;
-  if (in->Pop(&pkt)) {
-    if (!pkt.IsEncoded()) {
-      return NodeStatus{false,
-                        "recorder: unexpected non-encoded packet on 'es_packets'"};
-    }
-    ++frames_recorded_;
-    Packet clip("clips", pkt.payload(), pkt.pts_us());
-    if (!out->Push(std::move(clip))) {
-      return NodeStatus{false, "recorder: output buffer full or EOS"};
-    }
-  }
-  return NodeStatus{};
+absl::Status RecorderNode::Open(graph::runtime::GraphContext&) {
+  return absl::OkStatus();
 }
 
-NodeStatus RecorderNode::Close() {
+absl::Status RecorderNode::Process(graph::runtime::GraphContext& ctx) {
+  auto& in = ctx.Inputs().Get("input");
+  if (in.IsEmpty()) return absl::OkStatus();
+  auto pkt_or = in.Value().Share<video::codec::VideoPacket>();
+  if (!pkt_or.ok()) {
+    return absl::InvalidArgumentError(
+        "recorder: unexpected non-encoded packet on 'input'");
+  }
+  ++frames_recorded_;
+  auto out_pkt =
+      graph::runtime::Packet::MakePacket<video::codec::VideoPacket>(**pkt_or)
+          .At(in.Value().timestamp());
+  ctx.Outputs().Get("output").AddPacket(std::move(out_pkt));
+  return absl::OkStatus();
+}
+
+absl::Status RecorderNode::Close(graph::runtime::GraphContext&) {
   if (!finalized_) {
     finalized_ = true;
     std::printf("[recorder] session finalized: %lld encoded frame(s)\n",
                 static_cast<long long>(frames_recorded_));
   }
-  return NodeStatus{};
+  return absl::OkStatus();
 }
 
-REGISTER_NODE("RecorderNode", RecorderNode);
+namespace { using media::record::RecorderNode; }
+GRAPH_RUNTIME_REGISTER_NODE("RecorderNode", RecorderNode);
 
 }  // namespace media::record

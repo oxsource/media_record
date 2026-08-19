@@ -21,10 +21,5 @@
       "type": "PreviewNode",
       "input_streams": ["input:view_frames"]
     }
-  ],
-  "streams": [
-    { "name": "front_frames", "source_node": "cam_front", "source_port": "output", "dest_node": "layout", "dest_port": "f" },
-    { "name": "rear_frames", "source_node": "cam_rear", "source_port": "output", "dest_node": "layout", "dest_port": "r" },
-    { "name": "view_frames", "source_node": "layout", "source_port": "output", "dest_node": "preview", "dest_port": "input" }
   ]
 }

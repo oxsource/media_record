@@ -1,17 +1,14 @@
 {
-  "max_queue_size": 100,
   "nodes": [
     {
       "name": "cam_front",
       "type": "StreamInputNode",
-      "output_streams": ["output:front_frames"],
-      "options": { "source": "image:front.jpg", "width": 1280, "height": 720, "fps": 30 }
+      "output_streams": ["output:front_frames"]
     },
     {
       "name": "cam_rear",
       "type": "StreamInputNode",
-      "output_streams": ["output:rear_frames"],
-      "options": { "source": "image:rear.jpg", "width": 1280, "height": 720, "fps": 30 }
+      "output_streams": ["output:rear_frames"]
     },
     {
       "name": "signals",
@@ -47,14 +44,5 @@
       "type": "MuxerSinkNode",
       "input_streams": ["input:clips"]
     }
-  ],
-  "streams": [
-    { "name": "front_frames", "source_node": "cam_front", "source_port": "output", "dest_node": "layout", "dest_port": "f" },
-    { "name": "rear_frames", "source_node": "cam_rear", "source_port": "output", "dest_node": "layout", "dest_port": "r" },
-    { "name": "signals", "source_node": "signals", "source_port": "output", "dest_node": "overlay", "dest_port": "signal" },
-    { "name": "view_frames", "source_node": "layout", "source_port": "output", "dest_node": "overlay", "dest_port": "video" },
-    { "name": "osd_frames", "source_node": "overlay", "source_port": "output", "dest_node": "encoder", "dest_port": "input" },
-    { "name": "es_packets", "source_node": "encoder", "source_port": "output", "dest_node": "recorder", "dest_port": "input" },
-    { "name": "clips", "source_node": "recorder", "source_port": "output", "dest_node": "muxer", "dest_port": "input" }
   ]
 }

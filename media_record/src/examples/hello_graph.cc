@@ -17,11 +17,13 @@
 #include <cstdio>
 #include <cstdlib>
 #include <memory>
+#include <set>
 #include <string>
 #include <vector>
 
 #include "media_record/media_record.h"
-#include "src/framework/config/pipeline_config.h"
+#include "src/framework/config/config_validator.h"
+#include "src/framework/config/json/json_parser.h"
 
 namespace media::record::examples {
 
@@ -83,12 +85,6 @@ int main(int argc, char** argv) {
   using media::record::Node;
   using media::record::NodeRegistry;
   using media::record::examples::PrintUsage;
-  using media::record::config::CheckRegisteredTypes;
-  using media::record::config::ConfigStatus;
-  using media::record::config::LoadPipelineConfigFile;
-  using media::record::config::PipelineConfig;
-  using media::record::config::PipelineNodeDef;
-  using media::record::config::ValidatePipelineConfig;
 
   std::string config_path = "src/examples/configs/recorder.json";
   for (int i = 1; i < argc; ++i) {
@@ -109,33 +105,49 @@ int main(int argc, char** argv) {
 
   // Resolve the template. `bazel run` executes from the workspace root, so the
   // source-tree-relative path (src/examples/configs/...) is the canonical form.
-  PipelineConfig config;
-  ConfigStatus status = LoadPipelineConfigFile(config_path, &config);
-  if (!status.ok) {
-    std::fprintf(stderr, "error: %s\n", status.message.c_str());
+  // Parse the template with graph_runtime's own JSON parser.
+  graph::runtime::JsonParser parser;
+  auto parsed = parser.Parse(config_path);
+  if (!parsed.ok()) {
+    std::fprintf(stderr, "error: cannot parse '%s': %s\n", config_path.c_str(),
+                 parsed.status().ToString().c_str());
+    return 1;
+  }
+  graph::runtime::GraphConfig config = std::move(*parsed);
+
+  const absl::Status validation = graph::runtime::ConfigValidator::Validate(config);
+  if (!validation.ok()) {
+    std::fprintf(stderr, "error: %s\n", validation.ToString().c_str());
     return 1;
   }
 
-  status = ValidatePipelineConfig(config);
-  if (!status.ok) {
-    std::fprintf(stderr, "error: %s\n", status.message.c_str());
-    return 1;
+  for (const auto& def : config.nodes) {
+    if (!NodeRegistry::Instance().Contains(def.type)) {
+      std::fprintf(stderr, "error: node '%s': type '%s' is not registered\n",
+                   def.name.c_str(), def.type.c_str());
+      return 1;
+    }
   }
 
-  status = CheckRegisteredTypes(config, [](const std::string& type) {
-    return NodeRegistry::Instance().Contains(type);
-  });
-  if (!status.ok) {
-    std::fprintf(stderr, "error: %s\n", status.message.c_str());
-    return 1;
+  // Count the implicit streams ("port:stream" names) for the log line.
+  std::set<std::string> streams;
+  for (const auto& def : config.nodes) {
+    for (const std::string& is : def.input_streams) {
+      const size_t colon = is.find(':');
+      streams.insert(colon == std::string::npos ? is : is.substr(colon + 1));
+    }
+    for (const std::string& os : def.output_streams) {
+      const size_t colon = os.find(':');
+      streams.insert(colon == std::string::npos ? os : os.substr(colon + 1));
+    }
   }
 
   // Assemble the graph from the config, then run the skeleton lifecycle.
   std::printf("[hello_graph] loading %s: %zu node(s), %zu stream(s)\n",
-              config_path.c_str(), config.nodes.size(), config.streams.size());
+              config_path.c_str(), config.nodes.size(), streams.size());
 
   std::vector<std::unique_ptr<Node>> graph;
-  for (const PipelineNodeDef& def : config.nodes) {
+  for (const graph::runtime::GraphConfig::NodeDef& def : config.nodes) {
     std::unique_ptr<Node> node = NodeRegistry::Instance().Create(def.type);
     if (node == nullptr) {
       std::fprintf(stderr, "error: node '%s': factory returned null\n",

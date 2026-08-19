@@ -5,8 +5,12 @@
 #include <string>
 
 #include "native_ui/render.h"
-#include "src/framework/transport/packet.h"
-#include "src/framework/transport/recording_defaults.h"
+#include "src/framework/node/graph_context.h"
+#include "src/framework/node/node_contract.h"
+#include "src/framework/node/node_options.h"
+#include "src/framework/node/node_registry.h"
+#include "src/framework/public/types.h"
+#include "src/framework/stream/packet.h"
 #include "video_codec/video_codec.h"
 
 namespace media::record {
@@ -21,36 +25,58 @@ int64_t NowUs() {
 
 }  // namespace
 
-NodeStatus StreamInputNode::Open() {
-  const std::string& path = Defaults().input_image;
-  if (path.empty()) {
-    return NodeStatus{false,
-                      "stream_input: no input image configured "
-                      "(RecordingDefaults::input_image)"};
+StreamInputNode::StreamInputNode(const std::string& name,
+                                 const graph::runtime::NodeOptions& options)
+    : Node(name) {
+  if (const std::string* v = options.Get<std::string>("image")) {
+    image_path_ = *v;
   }
-  std::unique_ptr<native::ui::Image> image = native::ui::Image::FromFile(path.c_str());
+  if (const int* v = options.Get<int>("width")) width_ = *v;
+  if (const int* v = options.Get<int>("height")) height_ = *v;
+  if (const int* v = options.Get<int>("fps")) fps_ = *v;
+  if (const int* v = options.Get<int>("frame_count")) frame_count_ = *v;
+  if (fps_ <= 0) fps_ = 30;
+  if (frame_count_ <= 0) frame_count_ = 300;
+}
+
+absl::Status StreamInputNode::GetContract(graph::runtime::NodeContract* c) {
+  c->Outputs().Get("output").Set<video::codec::VideoFrame>();
+  return absl::OkStatus();
+}
+
+absl::Status StreamInputNode::Open(graph::runtime::GraphContext&) {
+  if (image_path_.empty()) {
+    return absl::InvalidArgumentError(
+        "stream_input: no input image configured (NodeOptions 'image')");
+  }
+  std::unique_ptr<native::ui::Image> image =
+      native::ui::Image::FromFile(image_path_.c_str());
   if (!image) {
-    return NodeStatus{false, "stream_input: cannot decode input image '" + path +
-                                 "' (missing or unsupported format)"};
+    return absl::InvalidArgumentError(
+        "stream_input: cannot decode input image '" + image_path_ +
+        "' (missing or unsupported format)");
   }
-  width_ = image->width();
-  height_ = image->height();
+  if (width_ <= 0) width_ = image->width();
+  if (height_ <= 0) height_ = image->height();
   image_.resize(static_cast<size_t>(width_) * height_ * 4);
   if (!image->CopyPixels(width_, height_, static_cast<size_t>(width_) * 4,
                          image_.data())) {
-    return NodeStatus{false, "stream_input: cannot read pixels of input image '" +
-                                 path + "'"};
+    return absl::InvalidArgumentError(
+        "stream_input: cannot read pixels of input image '" + image_path_ +
+        "'");
   }
   frame_index_ = 0;
-  return NodeStatus{};
+  return absl::OkStatus();
 }
 
-NodeStatus StreamInputNode::Process() {
-  StreamBuffer* out = Output("frames");
-  if (out == nullptr) {
-    return NodeStatus{false, "stream_input: missing output stream 'frames'"};
+absl::Status StreamInputNode::Close(graph::runtime::GraphContext&) {
+  return absl::OkStatus();
+}
+
+absl::Status StreamInputNode::Process(graph::runtime::GraphContext& ctx) {
+  if (frame_index_ >= frame_count_) {
+    return graph::runtime::StatusStop();
   }
-  if (out->eos()) return NodeStatus{};  // recording ended; stop producing
 
   video::codec::VideoFrame frame;
   frame.format = video::codec::PixelFormat::kRGBA;
@@ -60,16 +86,16 @@ NodeStatus StreamInputNode::Process() {
   frame.planes[0] = image_;
   frame.timestamp_us = NowUs();
 
-  const int64_t pts = frame_index_ * 1000000LL /
-                      (Defaults().fps > 0 ? Defaults().fps : 30);
-  Packet pkt("frames", std::move(frame), pts);
-  if (!out->Push(std::move(pkt))) {
-    return NodeStatus{false, "stream_input: output buffer full or EOS"};
-  }
+  const int64_t pts = frame_index_ * 1000000LL / fps_;
+  auto pkt = graph::runtime::Packet::MakePacket<video::codec::VideoFrame>(
+                 std::move(frame))
+                 .At(graph::runtime::Timestamp(pts));
+  ctx.Outputs().Get("output").AddPacket(std::move(pkt));
   ++frame_index_;
-  return NodeStatus{};
+  return absl::OkStatus();
 }
 
-REGISTER_NODE("StreamInputNode", StreamInputNode);
+namespace { using media::record::StreamInputNode; }
+GRAPH_RUNTIME_REGISTER_NODE("StreamInputNode", StreamInputNode);
 
 }  // namespace media::record

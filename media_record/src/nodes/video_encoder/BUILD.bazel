@@ -7,16 +7,17 @@ cc_library(
     hdrs = ["rgba_i420.h"],
 )
 
-# VideoEncoderNode (spec 002): software RGBA->I420 + video_codec VideoEncoder
-# (H.264, FFmpeg backend) in push mode into the "es_packets" stream buffer.
+# VideoEncoderNode (spec 002): graph_runtime node; software RGBA->I420 +
+# video_codec VideoEncoder (H.264, FFmpeg backend) in push mode; encoded
+# packets are forwarded as graph::runtime::Packet on "output:es_packets".
+
 cc_library(
     name = "video_encoder",
     srcs = ["video_encoder_node.cc"],
     hdrs = ["video_encoder_node.h"],
     deps = [
         ":rgba_i420",
-        "//src/framework/public:media_record",
-        "//src/framework/transport:transport",
+        "@graph_runtime//src/framework/public:runtime",
         "@video_codec//src/framework/public:video_codec",
     ],
     alwayslink = True,
