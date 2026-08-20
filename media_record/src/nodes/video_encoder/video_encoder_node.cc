@@ -8,6 +8,7 @@
 #include "graph_runtime/node_options.h"
 #include "graph_runtime/node_registry.h"
 #include "graph_runtime/packet.h"
+#include "src/framework/debug/perf_timer.h"
 #include "src/framework/lifecycle/lifecycle_context.h"
 #include "src/nodes/video_encoder/rgba_i420.h"
 
@@ -190,6 +191,7 @@ absl::Status VideoEncoderNode::Process(graph::runtime::GraphContext& ctx) {
       absl::Status status = EnsureEncoder(rgba);
       if (!status.ok()) return status;
 
+      const auto t_start = timer_.Begin();
       video::codec::VideoFrame i420;
       i420.format = video::codec::PixelFormat::kI420;
       i420.width = rgba.width;
@@ -209,8 +211,11 @@ absl::Status VideoEncoderNode::Process(graph::runtime::GraphContext& ctx) {
                  {i420.planes[0].data(), static_cast<size_t>(i420.stride[0]),
                   i420.planes[1].data(), static_cast<size_t>(i420.stride[1]),
                   i420.planes[2].data(), static_cast<size_t>(i420.stride[2])});
+      timer_.Accumulate("convert", t_start);
+      const auto t_convert_end = timer_.Begin();
 
       const auto result = encoder_->Encode(i420);
+      timer_.Accumulate("encode", t_convert_end);
       if (!result.ok()) {
         return absl::InternalError("video_encoder: Encode failed (" +
                                    StatusName(result.status()) + ")");
@@ -234,6 +239,7 @@ absl::Status VideoEncoderNode::Process(graph::runtime::GraphContext& ctx) {
 }
 
 absl::Status VideoEncoderNode::Close(graph::runtime::GraphContext&) {
+  timer_.PrintSummary("encoder");
   if (encoder_) encoder_->Release();
   encoder_.reset();
   sink_.reset();

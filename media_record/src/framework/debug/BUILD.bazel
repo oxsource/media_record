@@ -1,0 +1,9 @@
+package(default_visibility = ["//visibility:public"])
+
+# Always-on per-stage timing for the dashcam pipeline (debug/profiling aid).
+# Header-only: nodes timestamp stage boundaries and print a summary in Close().
+cc_library(
+    name = "debug",
+    hdrs = ["perf_timer.h"],
+    visibility = ["//visibility:public"],
+)

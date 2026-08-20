@@ -10,6 +10,7 @@
 #include "absl/status/statusor.h"
 #include "graph_runtime/node_registry.h"
 #include "graph_runtime/runtime.h"
+#include "src/framework/debug/perf_timer.h"
 #include "src/framework/lifecycle/lifecycle_context.h"
 #include "src/render/dashcam_renderer.h"
 #include "video_codec/video_codec.h"
@@ -159,6 +160,7 @@ absl::Status DashcamRenderNode::EnsureSurfaceRenderer(
 #endif
 
 absl::Status DashcamRenderNode::Close(graph::runtime::GraphContext&) {
+  timer_.PrintSummary("render");
   renderer_.reset();
   return absl::OkStatus();
 }
@@ -198,11 +200,13 @@ absl::Status DashcamRenderNode::Process(graph::runtime::GraphContext& ctx) {
     // VideoFrame is produced (spec 003: nodes don't exchange CPU frames here).
     absl::Status status = EnsureSurfaceRenderer(ctx);
     if (!status.ok()) return status;
+    const auto t_render = timer_.Begin();
     if (!surface_renderer_->Render(frame_index_, timestamp, pts,
                                    render_ctx_.get())) {
       return absl::InternalError(
           "dashcam_render: surface DashcamRenderer::Render failed");
     }
+    timer_.Accumulate("render", t_render);
     media::record::PacketNotify notify;
     notify.timestamp_us = NowUs();
     auto pkt = graph::runtime::Packet::MakePacket<media::record::PacketNotify>(
@@ -217,16 +221,20 @@ absl::Status DashcamRenderNode::Process(graph::runtime::GraphContext& ctx) {
   // Compose one dashcam frame into the external-owned buffer (zero-copy via
   // Surface::CreateFromPixels). We then copy into the VideoFrame's own plane
   // because VideoFrame owns its pixel data.
+  const auto t_render = timer_.Begin();
   if (!renderer_->Render(frame_index_, timestamp, frame_)) {
     return absl::InternalError("dashcam_render: DashcamRenderer::Render failed");
   }
+  timer_.Accumulate("render", t_render);
 
   video::codec::VideoFrame frame;
   frame.format = video::codec::PixelFormat::kRGBA;
   frame.width = width_;
   frame.height = height_;
   frame.stride[0] = width_ * 4;
+  const auto t_copy = timer_.Begin();
   frame.planes[0] = frame_.data;
+  timer_.Accumulate("copy", t_copy);
   // Monotonic PTS (µs), same clock as the surface path, so the CPU-mode MP4 has
   // strictly increasing dts/pts (wall clock can collide and break decoding).
   frame.timestamp_us = pts;

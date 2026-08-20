@@ -6,6 +6,7 @@
 
 #include "graph_runtime/node.h"
 #include "native_ui/surface.h"
+#include "src/framework/debug/perf_timer.h"
 #include "src/framework/lifecycle/lifecycle_context.h"
 #include "src/render/dashcam_renderer.h"
 
@@ -69,6 +70,8 @@ class DashcamRenderNode : public graph::runtime::Node {
   std::unique_ptr<render::DashcamRenderer> surface_renderer_;
   std::unique_ptr<native::ui::RenderContext> render_ctx_;
 #endif
+  // Always-on per-stage timing (render, copy); summary printed in Close().
+  media::record::StageTimer timer_;
 };
 
 }  // namespace record

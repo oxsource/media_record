@@ -5,6 +5,7 @@
 #include <vector>
 
 #include "graph_runtime/node.h"
+#include "src/framework/debug/perf_timer.h"
 #include "video_codec/video_codec.h"
 
 #if defined(__ANDROID__)
@@ -62,6 +63,9 @@ class VideoEncoderNode : public graph::runtime::Node {
   std::unique_ptr<PacketSinkAdapter> sink_;
   std::vector<graph::runtime::Packet> pending_;  // encoded packets to emit
   bool flushed_ = false;
+
+  // Always-on per-stage timing (convert/encode); summary printed in Close().
+  media::record::StageTimer timer_;
 };
 
 }  // namespace media::record

@@ -9,7 +9,7 @@
 #include "graph_runtime/node_options.h"
 #include "graph_runtime/node_registry.h"
 #include "graph_runtime/packet.h"
-
+#include "src/framework/debug/perf_timer.h"
 #include "src/framework/lifecycle/lifecycle_context.h"
 
 namespace media::record {
@@ -95,7 +95,9 @@ absl::Status MuxerSinkNode::Process(graph::runtime::GraphContext& ctx) {
   }
   const video::codec::VideoPacket& src = **pkt_or;
   video::codec::VideoPacket copy = src;
+  const auto t0 = timer_.Begin();
   const video::codec::Status s = muxer_->Push(std::move(copy));
+  timer_.Accumulate("push", t0);
   if (s != video::codec::Status::kOk) {
     return absl::InternalError("muxer_sink: Muxer::Push failed (" +
                                StatusName(s) + ")");
@@ -104,6 +106,7 @@ absl::Status MuxerSinkNode::Process(graph::runtime::GraphContext& ctx) {
 }
 
 absl::Status MuxerSinkNode::Close(graph::runtime::GraphContext& ctx) {
+  timer_.PrintSummary("muxer_sink");
   // Finalize only on a successful run: Finish() writes the trailer, then the
   // temp file is atomically renamed to the target. On failure (or a partial
   // run) the temp file is removed so no broken artifact remains (FR-009).

@@ -5,6 +5,7 @@
 #include <string>
 
 #include "graph_runtime/node.h"
+#include "src/framework/debug/perf_timer.h"
 #include "video_codec/video_codec.h"
 
 // MuxerSinkNode (spec 002): writes the encoded packets into an MP4 file.
@@ -42,6 +43,8 @@ class MuxerSinkNode : public graph::runtime::Node {
   std::string target_path_;
   std::string temp_path_;
   bool finished_ = false;
+  // Always-on per-stage timing (push); summary printed in Close().
+  media::record::StageTimer timer_;
 };
 
 }  // namespace media::record
