@@ -64,11 +64,11 @@ DashcamRenderNode::DashcamRenderNode(const std::string& name,
 // (Android surface mode) — declared SetAny() so both route through the same
 // port; Process() branches on surface_mode_.
 absl::Status DashcamRenderNode::GetContract(graph::runtime::NodeContract* c) {
-  c->Outputs().Get("output").SetAny();
+  c->Outputs().Get("output").SetNone();
   return absl::OkStatus();
 }
 
-absl::Status DashcamRenderNode::Open(graph::runtime::GraphContext&) {
+absl::Status DashcamRenderNode::Open(graph::runtime::GraphContext& ctx) {
   if (background_path_.empty() || car_path_.empty()) {
     return absl::InvalidArgumentError(
         "dashcam_render: 'background' and 'dog' image paths are required "
@@ -79,6 +79,16 @@ absl::Status DashcamRenderNode::Open(graph::runtime::GraphContext&) {
     // Surface mode: renderer + RenderContext are built lazily on first
     // Process() (the encoder's input surface is written to LifecycleContext
     // during the encoder's Open, which completes before any source Process).
+    // Capture the LifecycleContext pointer NOW: side packets ARE available in
+    // Open(), but async Process contexts are built without them (graph_runtime
+    // SchedulerQueue::RunNode), so EnsureSurfaceRenderer must read the pointer
+    // from this member, not ctx.InputSidePackets().
+    const graph::runtime::Packet sp =
+        ctx.InputSidePackets().Get(media::record::LifecycleContext::kSidePacketTag);
+    if (!sp.IsEmpty()) {
+      auto lc = sp.Get<media::record::LifecycleContext*>();
+      if (lc.ok()) lifecycle_ctx_ = lc.value();
+    }
     frame_index_ = 0;
     pacing_start_us_ = NowUs();
     return absl::OkStatus();
@@ -111,16 +121,15 @@ absl::Status DashcamRenderNode::Open(graph::runtime::GraphContext&) {
 // the shared LifecycleContext, host a RenderContext on it, and build the
 // surface-mode DashcamRenderer. Called once; subsequent frames reuse the setup.
 absl::Status DashcamRenderNode::EnsureSurfaceRenderer(
-    graph::runtime::GraphContext& ctx) {
+    graph::runtime::GraphContext&) {
   if (surface_renderer_) return absl::OkStatus();
 
-  const graph::runtime::Packet sp =
-      ctx.InputSidePackets().Get(media::record::LifecycleContext::kSidePacketTag);
+  // Use the LifecycleContext pointer captured in Open() — async Process
+  // contexts do not carry input side packets (graph_runtime
+  // SchedulerQueue::RunNode builds a fresh context), so reading the pointer
+  // back from ctx.InputSidePackets() here would always find it empty.
   void* input_surface = nullptr;
-  if (!sp.IsEmpty()) {
-    auto lc = sp.Get<media::record::LifecycleContext*>();
-    if (lc.ok() && lc.value()) input_surface = lc.value()->input_surface;
-  }
+  if (lifecycle_ctx_) input_surface = lifecycle_ctx_->input_surface;
   if (!input_surface) {
     return absl::InternalError(
         "dashcam_render: encoder input surface not ready (LifecycleContext "
@@ -173,7 +182,9 @@ absl::Status DashcamRenderNode::Process(graph::runtime::GraphContext& ctx) {
   }
 
   const std::string timestamp = FormatTimestamp(timestamp_format_);
-  const int64_t pts = frame_index_ * 1000000LL / fps_;
+  // PTS for this frame in µs, starting at 1/fps (a zero PTS can be rejected by
+  // some MediaCodec encoders — video_codec's surface example uses (i+1)*1e6/fps).
+  const int64_t pts = (frame_index_ + 1) * 1000000LL / fps_;
 
 #if defined(__ANDROID__)
   if (surface_mode_) {
@@ -183,7 +194,7 @@ absl::Status DashcamRenderNode::Process(graph::runtime::GraphContext& ctx) {
     // VideoFrame is produced (spec 003: nodes don't exchange CPU frames here).
     absl::Status status = EnsureSurfaceRenderer(ctx);
     if (!status.ok()) return status;
-    if (!surface_renderer_->Render(frame_index_, timestamp,
+    if (!surface_renderer_->Render(frame_index_, timestamp, pts,
                                    render_ctx_.get())) {
       return absl::InternalError(
           "dashcam_render: surface DashcamRenderer::Render failed");

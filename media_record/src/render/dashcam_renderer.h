@@ -65,8 +65,9 @@ class DashcamRenderer {
   // Background is imported zero-copy via Surface::CreateFromBuffer(kGPU) when
   // available (else falls back to CPU raster). Same bounce/timestamp logic as
   // the CPU path; the frame is flushed + swapped (presented) to the encoder
-  // inside this call. Returns false on setup/render failure.
-  bool Render(int frame_index, const std::string& timestamp,
+  // inside this call, with `pts_us` stamped on the input surface so MediaCodec
+  // produces monotonic dts/pts. Returns false on setup/render failure.
+  bool Render(int frame_index, const std::string& timestamp, int64_t pts_us,
               native::ui::RenderContext* ctx);
 #endif
 

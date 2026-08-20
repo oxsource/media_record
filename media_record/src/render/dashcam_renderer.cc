@@ -208,7 +208,7 @@ bool DashcamRenderer::DrawFrame(native::ui::Canvas& canvas, int frame_index,
 // to a later iteration (spec 003 follow-up); this keeps the shared DrawFrame
 // path intact for both platforms.
 bool DashcamRenderer::Render(int frame_index, const std::string& timestamp,
-                             native::ui::RenderContext* ctx) {
+                             int64_t pts_us, native::ui::RenderContext* ctx) {
   if (!ctx_ || !ctx || !ctx->gr) return false;
 
   auto surface = native::ui::Surface::Create(ctx);
@@ -222,8 +222,16 @@ bool DashcamRenderer::Render(int frame_index, const std::string& timestamp,
   // Shared scene drawing (background + bouncing dog + timestamp) — same as CPU.
   if (!DrawFrame(canvas, frame_index, timestamp)) return false;
 
-  // Submit GPU work and present the frame to the encoder.
+  // Submit GPU work and present the frame to the encoder. Stamp the
+  // presentation timestamp (µs -> ns) on the input surface FIRST so MediaCodec
+  // produces monotonic dts/pts (spec 003 D.6); without it the encoder receives
+  // a stale/system timestamp and most input-surface frames are dropped.
   surface->Flush();
+  if (!ctx->SetPresentationTimeNs(pts_us * 1000)) {
+    std::fprintf(stderr,
+                 "DashcamRenderer: eglPresentationTimeANDROID unavailable "
+                 "(non-monotonic encoder timestamps likely)\n");
+  }
   ctx->SwapBuffers();
   return true;
 }

@@ -6,6 +6,7 @@
 
 #include "graph_runtime/node.h"
 #include "native_ui/surface.h"
+#include "src/framework/lifecycle/lifecycle_context.h"
 #include "src/render/dashcam_renderer.h"
 
 #if defined(__ANDROID__)
@@ -59,6 +60,9 @@ class DashcamRenderNode : public graph::runtime::Node {
   // External-owned RGBA frame buffer (allocated by Surface::Allocate).
   native::ui::PixelBuffer frame_;
 #if defined(__ANDROID__)
+  // LifecycleContext pointer captured in Open() (side packets are available
+  // there, but not in async Process contexts); used by EnsureSurfaceRenderer.
+  media::record::LifecycleContext* lifecycle_ctx_ = nullptr;
   std::unique_ptr<render::DashcamRenderer> surface_renderer_;
   std::unique_ptr<native::ui::RenderContext> render_ctx_;
 #endif
