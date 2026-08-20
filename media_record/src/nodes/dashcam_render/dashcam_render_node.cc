@@ -57,6 +57,8 @@ DashcamRenderNode::DashcamRenderNode(const std::string& name,
   if (const int* v = options.Get<int>("fps")) fps_ = *v;
   if (const int* v = options.Get<int>("frame_count")) frame_count_ = *v;
   if (const bool* v = options.Get<bool>("input_surface")) surface_mode_ = *v;
+  if (const int* v = options.Get<int>("render_width")) render_width_ = *v;
+  if (const int* v = options.Get<int>("render_height")) render_height_ = *v;
   if (fps_ <= 0) fps_ = 30;
   if (frame_count_ <= 0) frame_count_ = 300;
 }
@@ -100,7 +102,8 @@ absl::Status DashcamRenderNode::Open(graph::runtime::GraphContext& ctx) {
   }
 #endif
   renderer_ = render::DashcamRenderer::Create(
-      background_path_, car_path_, width_, height_);
+      background_path_, car_path_, width_, height_, render_width_,
+      render_height_);
   if (!renderer_) {
     return absl::InvalidArgumentError(
         "dashcam_render: failed to load/scale background/dog images "
@@ -161,6 +164,10 @@ absl::Status DashcamRenderNode::EnsureSurfaceRenderer(
 
 absl::Status DashcamRenderNode::Close(graph::runtime::GraphContext&) {
   timer_.PrintSummary("render");
+#if defined(__ANDROID__)
+  if (surface_renderer_) surface_renderer_->PrintTimingSummary();
+#endif
+  if (renderer_) renderer_->PrintTimingSummary();
   renderer_.reset();
   return absl::OkStatus();
 }
@@ -179,7 +186,10 @@ absl::Status DashcamRenderNode::Process(graph::runtime::GraphContext& ctx) {
     return graph::runtime::StatusStop();
   }
 
-  // Frame pacing (same shape as StreamInputNode).
+  // Frame pacing (same shape as StreamInputNode). Note: only sleeps when the
+  // per-frame work is FASTER than the frame budget (fps); when rendering is
+  // slower than real-time (e.g. CPU-mode Skia draw > 33ms), target_us <= now_us
+  // and this is a no-op — pacing adds zero time.
   const int64_t now_us = NowUs();
   const int64_t target_us =
       pacing_start_us_ + frame_index_ * 1000000LL / fps_;

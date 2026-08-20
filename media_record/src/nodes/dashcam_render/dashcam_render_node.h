@@ -57,6 +57,11 @@ class DashcamRenderNode : public graph::runtime::Node {
   int fps_ = 30;
   int frame_count_ = 300;
   bool surface_mode_ = false;
+  // Optional down-sampled composition resolution (0 = full target). When set,
+  // the scene is drawn at render_width_ x render_height_ and upscaled to the
+  // target frame — much cheaper on CPU Skia (see specs/003 perf-analysis.md).
+  int render_width_ = 0;
+  int render_height_ = 0;
 
   int frame_index_ = 0;
   int64_t pacing_start_us_ = 0;

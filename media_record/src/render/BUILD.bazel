@@ -9,6 +9,7 @@ cc_library(
     srcs = ["dashcam_renderer.cc"],
     hdrs = ["dashcam_renderer.h"],
     deps = [
+        "//src/framework/debug:debug",
         "@native_ui//:native_ui",
     ],
     visibility = ["//visibility:public"],

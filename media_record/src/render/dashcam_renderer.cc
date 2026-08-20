@@ -35,10 +35,11 @@ struct DashcamRenderer::Context {
   const uint8_t* surface_buffer = nullptr;  // data ptr of the buffer the surface wraps
   // Timestamp text paint — configured once and reused across frames.
   native::ui::Paint text_paint;
-  // Timestamp draw position + font size — fixed once and reused across frames.
+  // Timestamp draw position + font size — fixed once and reused across frames
+  // (scaled to render resolution when down-sampling).
   native::ui::Point text_pos{24.0f, 48.0f};
   float text_size = 36.0f;
-  // Fixed background dest rect (full frame).
+  // Fixed background dest rect (full render frame).
   native::ui::Rect bg_dest{0.0f, 0.0f, 0.0f, 0.0f};
   // Dog draw rect — x/w/h are fixed; only y changes per frame (bounce).
   native::ui::Rect dog_dest{0.0f, 0.0f, 0.0f, 0.0f};
@@ -67,16 +68,26 @@ void UpdateDogBounce(native::ui::Rect& dog_dest, int frame_index,
 
 }  // namespace
 
-DashcamRenderer::DashcamRenderer(int target_width, int target_height)
-    : target_width_(target_width), target_height_(target_height) {}
+DashcamRenderer::DashcamRenderer(int target_width, int target_height,
+                                 int render_width, int render_height)
+    : target_width_(target_width),
+      target_height_(target_height),
+      render_width_(render_width > 0 ? render_width : target_width),
+      render_height_(render_height > 0 ? render_height : target_height) {}
 
 DashcamRenderer::~DashcamRenderer() = default;
 
 std::unique_ptr<DashcamRenderer> DashcamRenderer::Create(
     const std::string& background_image_path,
     const std::string& car_image_path,
-    int target_width, int target_height) {
+    int target_width, int target_height,
+    int render_width, int render_height) {
   if (target_width <= 0 || target_height <= 0) return nullptr;
+  const int rw = render_width > 0 ? render_width : target_width;
+  const int rh = render_height > 0 ? render_height : target_height;
+  if (rw <= 0 || rh <= 0 || rw > target_width || rh > target_height) {
+    return nullptr;
+  }
 
   auto bg = native::ui::Image::FromFile(background_image_path.c_str());
   if (!bg) {
@@ -85,12 +96,13 @@ std::unique_ptr<DashcamRenderer> DashcamRenderer::Create(
                  background_image_path.c_str());
     return nullptr;
   }
-  // Scale the background to the target dimensions.
-  bg = bg->Scale(target_width, target_height);
+  // Scale the background to the RENDER dimensions (the scene is composed at
+  // render resolution, then upscaled to the target on output).
+  bg = bg->Scale(rw, rh);
   if (!bg) {
     std::fprintf(stderr,
                  "DashcamRenderer: failed to scale background to %dx%d\n",
-                 target_width, target_height);
+                 rw, rh);
     return nullptr;
   }
 
@@ -104,7 +116,7 @@ std::unique_ptr<DashcamRenderer> DashcamRenderer::Create(
   // give the "near-large / far-small" perspective as the car drives away.
 
   auto r = std::unique_ptr<DashcamRenderer>(
-      new DashcamRenderer(target_width, target_height));
+      new DashcamRenderer(target_width, target_height, rw, rh));
   r->ctx_ = std::make_unique<Context>();
   r->ctx_->background = std::move(bg);
   r->ctx_->car = std::move(car);
@@ -112,17 +124,21 @@ std::unique_ptr<DashcamRenderer> DashcamRenderer::Create(
   r->ctx_->text_paint
       .SetColor(native::ui::Color{255, 255, 255, 255})
       .SetAntiAlias(true);
-  // Pre-compute the fixed draw rects once; Render() only updates the dog's y
-  // each frame (bounce), so no per-frame Rect construction is needed.
+  // Pre-compute the fixed draw rects once (at RENDER resolution); Render() only
+  // updates the dog's y each frame (bounce), so no per-frame Rect construction.
   r->ctx_->bg_dest =
-      native::ui::Rect{0.0f, 0.0f, static_cast<float>(target_width),
-                       static_cast<float>(target_height)};
-  const int dog_h = target_height * 50 / 100;
+      native::ui::Rect{0.0f, 0.0f, static_cast<float>(rw),
+                       static_cast<float>(rh)};
+  const int dog_h = rh * 50 / 100;
   const int dog_w = dog_h;
-  const int cx = (target_width - dog_w) / 2;
+  const int cx = (rw - dog_w) / 2;
   r->ctx_->dog_dest =
       native::ui::Rect{static_cast<float>(cx), 0.0f,
                        static_cast<float>(dog_w), static_cast<float>(dog_h)};
+  // Timestamp geometry scaled to render resolution.
+  r->ctx_->text_pos = native::ui::Point{24.0f * rw / target_width,
+                                        48.0f * rh / target_height};
+  r->ctx_->text_size = 36.0f * rw / target_width;
   return r;
 }
 
@@ -160,8 +176,19 @@ bool DashcamRenderer::Render(int frame_index, const std::string& timestamp,
     ctx_->canvas = std::make_unique<native::ui::Canvas>(*ctx_->surface);
     ctx_->surface_buffer = buf_ptr;
   }
+
+  // Down-sampled rendering: when render_* < target_*, scale the canvas so the
+  // scene (drawn at render resolution) is painted upscaled to fill the full
+  // frame. Skia applies the transform to every draw op, so the per-op cost
+  // tracks render pixel count (much cheaper at 640x360 vs 1280x720), and the
+  // upscale is a single canvas transform — no separate composition buffer.
+  ctx_->canvas->Scale(static_cast<float>(render_width_) / target_width_,
+                      static_cast<float>(render_height_) / target_height_);
+  ctx_->canvas->Save();
   // Shared scene drawing (background + bouncing dog + timestamp).
-  return DrawFrame(*ctx_->canvas, frame_index, timestamp);
+  const bool ok = DrawFrame(*ctx_->canvas, frame_index, timestamp);
+  ctx_->canvas->Restore();
+  return ok;
 }
 
 // Shared scene: clear + background + bouncing dog + timestamp. Used by both the
@@ -171,20 +198,33 @@ bool DashcamRenderer::DrawFrame(native::ui::Canvas& canvas, int frame_index,
                                 const std::string& timestamp) {
   // Clear to opaque black so uncovered edges (if any) don't carry transparency
   // into the encoded video.
+  auto t0 = timer_.Begin();
   canvas.Clear(native::ui::Color{0, 0, 0, 255});
+  timer_.Accumulate("clear", t0);
 
-  // Background: tile the loaded image across the entire frame.
-  canvas.DrawImage(*ctx_->background, ctx_->bg_dest);
+  // Background: tile the loaded image across the entire frame. The background
+  // was pre-scaled to exactly (target_width, target_height) in Create(), and
+  // bg_dest is the full frame, so this is a 1:1 blit — use DrawImage1to1 (no
+  // resampling) instead of DrawImage's drawImageRect + bilinear sampling, which
+  // cost ~34ms/frame at 1280x720 and dominated the render stage.
+  t0 = timer_.Begin();
+  canvas.DrawImage1to1(*ctx_->background,
+                       native::ui::Point{ctx_->bg_dest.x, ctx_->bg_dest.y});
+  timer_.Accumulate("background", t0);
 
   // Dog (flydog): fixed size, centered horizontally; the bounce animation
   // updates dog_dest.y each frame (x/w/h were pre-computed at Create()).
   // DrawImage(image, dest) scales at draw time (drawImageRect) — no per-frame
   // Scale() allocation.
-  UpdateDogBounce(ctx_->dog_dest, frame_index, target_height_);
+  UpdateDogBounce(ctx_->dog_dest, frame_index, render_height_);
+  t0 = timer_.Begin();
   canvas.DrawImage(*ctx_->car, ctx_->dog_dest);
+  timer_.Accumulate("dog", t0);
 
   // Timestamp: top-left, large white font for readability.
+  t0 = timer_.Begin();
   canvas.DrawText(timestamp, ctx_->text_pos, ctx_->text_paint, ctx_->text_size);
+  timer_.Accumulate("timestamp", t0);
   return true;
 }
 

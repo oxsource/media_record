@@ -5,6 +5,7 @@
 #include <vector>
 
 #include "native_ui/surface.h"
+#include "src/framework/debug/perf_timer.h"
 
 #if defined(__ANDROID__)
 #include "native_ui/render_context.h"
@@ -39,10 +40,16 @@ class DashcamRenderer {
  public:
   // Loads the background and dog images from disk and pre-sizes them for the
   // target output dimensions. Returns nullptr on asset load failure.
+  // `render_width`/`render_height` optionally select a smaller internal
+  // composition resolution: the scene is drawn there and then upscaled to the
+  // target, which is much cheaper on CPU (Skia raster cost scales with pixel
+  // count — see specs/003-android-adaptation/perf-analysis.md). 0 = no
+  // down-sampling (render == target).
   static std::unique_ptr<DashcamRenderer> Create(
       const std::string& background_image_path,
       const std::string& dog_image_path,
-      int target_width, int target_height);
+      int target_width, int target_height,
+      int render_width = 0, int render_height = 0);
 
   ~DashcamRenderer();
 
@@ -51,6 +58,10 @@ class DashcamRenderer {
 
   int width() const { return target_width_; }
   int height() const { return target_height_; }
+
+  // Prints the per-step timing summary (clear/background/dog/timestamp) to
+  // stderr. Called by the owner in Close().
+  void PrintTimingSummary() const { timer_.PrintSummary("renderer"); }
 
   // Composes one frame into `buffer` (caller-owned, from
   // native::ui::Surface::Allocate). The canvas draws directly into
@@ -72,21 +83,29 @@ class DashcamRenderer {
 #endif
 
  private:
-  DashcamRenderer(int target_width, int target_height);
+  DashcamRenderer(int target_width, int target_height, int render_width,
+                  int render_height);
 
   // Draws the common scene (clear + background + bouncing dog + timestamp) onto
-  // `canvas`. Shared by the CPU (PixelBuffer) and Android (RenderContext
-  // surface) Render paths — only the canvas acquisition differs between them.
+  // `canvas` (at render_* resolution). Shared by the CPU (PixelBuffer) and
+  // Android (RenderContext surface) Render paths — only the canvas acquisition
+  // differs between them.
   bool DrawFrame(native::ui::Canvas& canvas, int frame_index,
                  const std::string& timestamp);
 
   int target_width_ = 0;
   int target_height_ = 0;
+  int render_width_ = 0;   // internal composition width (0 = target)
+  int render_height_ = 0;  // internal composition height (0 = target)
 
   // native::ui types are forward-declared in the .cc to keep Skia out of this
   // header (Skia isolation).
   struct Context;
   std::unique_ptr<Context> ctx_;
+
+  // Always-on per-step timing (clear/background/dog/timestamp); summary
+  // printed by the owner (DashcamRenderNode::Close) via PrintSummary("renderer").
+  media::record::StageTimer timer_;
 };
 
 }  // namespace render

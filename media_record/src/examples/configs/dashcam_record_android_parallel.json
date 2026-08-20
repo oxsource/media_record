@@ -17,7 +17,9 @@
         "fps": 30,
         "frame_count": 300,
         "format": "%Y-%m-%d %H:%M:%S",
-        "input_surface": false
+        "input_surface": false,
+        "render_width": 640,
+        "render_height": 360
       },
       "output_streams": ["output:frames"]
     },
