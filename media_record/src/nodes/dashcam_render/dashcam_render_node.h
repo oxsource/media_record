@@ -21,9 +21,12 @@ namespace record {
 // a timestamp overlay (top-left) using media_record::render::DashcamRenderer.
 //
 // Self-driven (no input streams). Frames are paced to the configured FPS.
-// Two output modes (spec 003), selected by the `input_surface` NodeOptions flag:
-//   - CPU (default, host): composes into a caller-owned RGBA PixelBuffer and
-//     emits video::codec::VideoFrame on 'output:frames' for VideoEncoderNode.
+// Two output modes (spec 003), selected by the `input_surface` NodeOptions flag
+// (surface mode only valid on Android):
+//   - CPU (default, host AND Android): composes into a caller-owned RGBA
+//     PixelBuffer and emits video::codec::VideoFrame on 'output:frames' for
+//     VideoEncoderNode. On Android this is the CPU-memory render+encode path
+//     (input_surface unset/false).
 //   - Android surface mode (input_surface=true): lazily (first Process) reads
 //     the encoder's input surface from LifecycleContext::input_surface, hosts a
 //     RenderContext on it, and composes directly onto the surface (GPU) via

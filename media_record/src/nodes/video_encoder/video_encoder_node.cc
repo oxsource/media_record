@@ -54,18 +54,14 @@ VideoEncoderNode::VideoEncoderNode(
   if (bitrate_ <= 0) bitrate_ = 4'000'000;
 }
 
-// The input stream carries a CPU VideoFrame (host) OR a PacketNotify
-// (Android surface mode) — declared SetAny() so both route through the same
-// port; Process() branches on the runtime type (see Process). Declaring the
-// platform-specific type here (instead of SetAny) keeps graph_runtime's
-// best-effort runtime type check silent: it warns on every packet when the
-// contract says `void` but the stream carries the real type (cosmetic only).
+// The input stream carries a CPU VideoFrame (host AND Android CPU mode) OR a
+// PacketNotify (Android surface mode) through the same port; Process() branches
+// on the runtime type (see Process). The contract does not pin a concrete type
+// (SetNone): both payloads legitimately flow here depending on the configured
+// mode, and graph_runtime's best-effort runtime type check would otherwise warn
+// on every packet (cosmetic only) for whichever type is NOT declared.
 absl::Status VideoEncoderNode::GetContract(graph::runtime::NodeContract* c) {
-#if defined(__ANDROID__)
-  c->Inputs().Get("input").Set<media::record::PacketNotify>();
-#else
-  c->Inputs().Get("input").Set<video::codec::VideoFrame>();
-#endif
+  c->Inputs().Get("input").SetNone();
   c->Outputs().Get("output").Set<video::codec::VideoPacket>();
   return absl::OkStatus();
 }

@@ -60,9 +60,13 @@ DashcamRenderNode::DashcamRenderNode(const std::string& name,
   if (frame_count_ <= 0) frame_count_ = 300;
 }
 
-// The output stream carries a CPU VideoFrame (host) OR a PacketNotify
-// (Android surface mode) — declared SetAny() so both route through the same
-// port; Process() branches on surface_mode_.
+// The output stream carries a CPU VideoFrame (host AND Android CPU mode) OR a
+// PacketNotify (Android surface mode) through the same port. The contract does
+// not pin a concrete type (SetNone): both payloads legitimately flow here
+// depending on the configured mode, and graph_runtime's best-effort runtime
+// type check would otherwise warn (cosmetic only) for whichever type is not
+// declared. Process() branches on surface_mode_ (Android + input_surface=true
+// -> surface path; otherwise -> CPU path).
 absl::Status DashcamRenderNode::GetContract(graph::runtime::NodeContract* c) {
   c->Outputs().Get("output").SetNone();
   return absl::OkStatus();
