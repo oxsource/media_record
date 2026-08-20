@@ -27,3 +27,5 @@ help:
 	@echo "  make android-push     Build + push binary/assets/config to device"
 	@echo "  make android-run      Build + push + run on device (surface mode)"
 	@echo "  make android-verify   Build + push + run + pull MP4 to $(OUT_DIR)/"
+	@echo "  android-verify params: SURFACE=true|false (force input_surface mode,"
+	@echo "    default = android config), SECONDS=N (clip length, default 10)"

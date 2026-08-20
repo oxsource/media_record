@@ -44,10 +44,14 @@ namespace {
 void PrintUsage(const char* argv0) {
   std::printf(
       "usage: %s [--config=FILE] [--output=FILE] [--frames=N]\n"
+      "            [--input-surface=true|false]\n"
       "  pipeline config is passed in from outside (--config=FILE);\n"
       "  default: src/examples/configs/dashcam_record.json (host CPU pipeline)\n"
       "  Android surface mode (MediaCodec):\n"
       "    --config=src/examples/configs/dashcam_record_android.json\n"
+      "  --input-surface overrides the render/encoder dataflow mode from the\n"
+      "  config (true = MediaCodec input surface, false = CPU memory path);\n"
+      "  it patches BOTH nodes since they must agree.\n"
       "  (background/car assets + node params come from the JSON 'options')\n"
       "  -> out/dashcam.mp4\n",
       argv0);
@@ -81,6 +85,7 @@ int main(int argc, char** argv) {
   std::string config_path = "src/examples/configs/dashcam_record.json";
   std::string output_override;  // empty = keep the config value
   int frames_override = -1;     // < 0 = keep the config frame budget
+  int surface_override = -1;    // < 0 = keep the config input_surface value
 
   for (int i = 1; i < argc; ++i) {
     const std::string arg = argv[i];
@@ -91,12 +96,22 @@ int main(int argc, char** argv) {
     const std::string cfg = TakeFlag(arg, "config");
     const std::string out = TakeFlag(arg, "output");
     const std::string fr = TakeFlag(arg, "frames");
+    const std::string sf = TakeFlag(arg, "input-surface");
     if (!cfg.empty()) {
       config_path = cfg;
     } else if (!out.empty()) {
       output_override = out;
     } else if (!fr.empty()) {
       frames_override = std::atoi(fr.c_str());
+    } else if (sf == "true" || sf == "1") {
+      surface_override = 1;
+    } else if (sf == "false" || sf == "0") {
+      surface_override = 0;
+    } else if (!sf.empty()) {
+      std::fprintf(stderr, "error: invalid --input-surface='%s' (use true/false)\n",
+                   sf.c_str());
+      PrintUsage(argv[0]);
+      return 2;
     } else {
       std::fprintf(stderr, "error: unknown argument '%s'\n", arg.c_str());
       PrintUsage(argv[0]);
@@ -155,12 +170,19 @@ int main(int argc, char** argv) {
 
   // Optional CLI overrides patch the matching node options via graph_runtime's
   // node-option injection (GraphRuntime::Options, applied at Initialize()).
+  // Options are keyed by NODE TYPE, so --input-surface patches BOTH the render
+  // and the encoder (they must agree on the dataflow mode).
   graph::runtime::GraphRuntime::Options options;
   if (!output_override.empty()) {
     options.nodes["MuxerSinkNode"].Set("output", output_override);
   }
   if (frames_override > 0) {
     options.nodes["DashcamRenderNode"].Set("frame_count", frames_override);
+  }
+  if (surface_override >= 0) {
+    const bool v = surface_override == 1;
+    options.nodes["DashcamRenderNode"].Set("input_surface", v);
+    options.nodes["VideoEncoderNode"].Set("input_surface", v);
   }
 
   absl::Status status = runtime.Initialize(config, options);

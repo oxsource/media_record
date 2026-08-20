@@ -12,6 +12,10 @@
 #
 # Requires ANDROID_NDK_HOME for the cross-build and a connected device/emulator
 # for push/run/verify.
+#
+# Optional parameters (forwarded to the on-device dashcam_record):
+#   SURFACE=true|false  — force input_surface mode (default: android config)
+#   SECONDS=N           — clip length in seconds (default 10, 30fps)
 
 ANDROID_CONFIG := android_arm64
 
@@ -27,8 +31,8 @@ android-push:
 
 # Build + push + run on the device (surface mode). Result stays on device.
 android-run:
-	bash $(PWD)/scripts/verify/android_dashcam.sh run
+	bash $(PWD)/scripts/verify/android_dashcam.sh run $(if $(SECONDS),--seconds=$(SECONDS)) $(if $(SURFACE),--input-surface=$(SURFACE))
 
 # Build + push + run + pull to $(OUT_DIR)/ + ffprobe/decode check.
 android-verify:
-	bash $(PWD)/scripts/verify/android_dashcam.sh verify
+	bash $(PWD)/scripts/verify/android_dashcam.sh verify $(if $(SECONDS),--seconds=$(SECONDS)) $(if $(SURFACE),--input-surface=$(SURFACE))

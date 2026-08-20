@@ -15,14 +15,43 @@
 # for push/run/verify.
 #
 # Usage:
-#   android_dashcam.sh [build|push|run|verify] [seconds]
+#   android_dashcam.sh [build|push|run|verify] [seconds] [--input-surface=true|false]
+#   --input-surface overrides the render/encoder dataflow mode (true = MediaCodec
+#   input surface, false = CPU memory path) on top of the android config.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 cd "$ROOT"
 
-MODE="${1:-verify}"
-CLIP_SECONDS="${2:-10}"
+MODE="verify"
+CLIP_SECONDS=10
+INPUT_SURFACE=""
+
+for arg in "$@"; do
+    case "${arg}" in
+        build|push|run|verify)
+            MODE="${arg}"
+            ;;
+        --seconds=*)
+            CLIP_SECONDS="${arg#*=}"
+            ;;
+        --input-surface=true|--input-surface=1)
+            INPUT_SURFACE="--input-surface=true"
+            ;;
+        --input-surface=false|--input-surface=0)
+            INPUT_SURFACE="--input-surface=false"
+            ;;
+        --help|-h)
+            echo "usage: android_dashcam.sh [build|push|run|verify] [--seconds=N] [--input-surface=true|false]"
+            exit 0
+            ;;
+        *)
+            echo "[android] error: unknown argument '${arg}'" >&2
+            exit 2
+            ;;
+    esac
+done
+
 DEV_DIR="/data/local/tmp/media_record"
 
 echo "[android] build //src/examples:dashcam_record (--config android_arm64)"
@@ -60,9 +89,18 @@ fi
 
 # --- run --------------------------------------------------------------------
 # The android config's asset/output paths target the /data/local test layout
-# (${DEV_DIR}). frame_count = 300 (10s @ 30fps); --frames=N overrides.
-echo "[android] run dashcam_record on ${DEVICE} (${CLIP_SECONDS}s, surface mode)"
-adb -s "${DEVICE}" shell "cd ${DEV_DIR} && ./dashcam_record --config=src/examples/configs/dashcam_record_android.json"
+# (${DEV_DIR}). frame_count = 300 (10s @ 30fps); --seconds=N scales it (fps=30).
+MODE_LABEL="surface mode"
+RUN_ARGS="--config=src/examples/configs/dashcam_record_android.json"
+RUN_ARGS="${RUN_ARGS} --frames=$((CLIP_SECONDS * 30))"
+if [[ -n "${INPUT_SURFACE}" ]]; then
+    RUN_ARGS="${RUN_ARGS} ${INPUT_SURFACE}"
+    if [[ "${INPUT_SURFACE}" == "--input-surface=false" ]]; then
+        MODE_LABEL="CPU memory mode"
+    fi
+fi
+echo "[android] run dashcam_record on ${DEVICE} (${CLIP_SECONDS}s, ${MODE_LABEL})"
+adb -s "${DEVICE}" shell "cd ${DEV_DIR} && ./dashcam_record ${RUN_ARGS}"
 
 if [[ "${MODE}" == "run" ]]; then
     echo "[android] run OK (result on device: ${DEV_DIR}/out/dashcam.mp4)"

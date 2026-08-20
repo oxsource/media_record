@@ -227,7 +227,9 @@ absl::Status DashcamRenderNode::Process(graph::runtime::GraphContext& ctx) {
   frame.height = height_;
   frame.stride[0] = width_ * 4;
   frame.planes[0] = frame_.data;
-  frame.timestamp_us = NowUs();
+  // Monotonic PTS (µs), same clock as the surface path, so the CPU-mode MP4 has
+  // strictly increasing dts/pts (wall clock can collide and break decoding).
+  frame.timestamp_us = pts;
 
   auto pkt = graph::runtime::Packet::MakePacket<video::codec::VideoFrame>(
                  std::move(frame))
