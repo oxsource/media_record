@@ -7,7 +7,8 @@
 # Targets (all prefixed `android-`):
 #   android-build  — cross-compile only (CI gate)
 #   android-push   — build + push binary/assets/config to the device
-#   android-run    — build + push + run dashcam_record on the device (surface)
+#   android-run    — build + push + run dashcam_record on the device (default
+#                    config = parallel executors, CPU mode)
 #   android-verify — build + push + run + pull + ffprobe/decode check
 #
 # Requires ANDROID_NDK_HOME for the cross-build and a connected device/emulator
@@ -29,7 +30,7 @@ android-build:
 android-push:
 	bash $(PWD)/scripts/verify/android_dashcam.sh push
 
-# Build + push + run on the device (surface mode). Result stays on device.
+# Build + push + run on the device. Result stays on device.
 android-run:
 	bash $(PWD)/scripts/verify/android_dashcam.sh run $(if $(SECONDS),--seconds=$(SECONDS)) $(if $(SURFACE),--input-surface=$(SURFACE))
 

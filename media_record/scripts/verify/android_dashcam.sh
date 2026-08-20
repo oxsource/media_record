@@ -6,8 +6,10 @@
 #   build   — cross-compile only (CI gate)
 #   push    — build + push the binary, images (road/dog) and the android config
 #             to the device
-#   run     — build + push + run dashcam_record on the device (surface mode,
-#             Android default config) producing out/dashcam.mp4
+#   run     — build + push + run dashcam_record on the device (default android
+#             config = dashcam_record_android_parallel.json, CPU-memory
+#             render+encode on source/encode/sink executors) producing
+#             out/dashcam.mp4
 #   verify  — build + push + run + pull the MP4 and ffprobe/decode-check it
 #             (default)
 #
@@ -71,15 +73,18 @@ DEVICE="$(adb devices | awk 'NR>1 && $2=="device" {print $1; exit}')"
 }
 
 # --- push resources ---------------------------------------------------------
-# dashcam_record runs from $DEV_DIR with config/asset paths relative to it:
-#   config   -> src/examples/configs/dashcam_record_android.json (surface mode)
+# dashcam_record runs from $DEV_DIR with config/asset paths relative to it.
+# Default android config: dashcam_record_android_parallel.json (CPU-memory
+# render+encode split across source/encode/sink executors).
+ANDROID_CONFIG="src/examples/configs/dashcam_record_android_parallel.json"
+#   config   -> ${ANDROID_CONFIG}
 #   assets   -> src/examples/assets/{dashcam_road.png,flydog.png}
 echo "[android] push binary + assets + config to ${DEVICE}:${DEV_DIR}"
 adb -s "${DEVICE}" shell "mkdir -p ${DEV_DIR}/src/examples/assets ${DEV_DIR}/src/examples/configs ${DEV_DIR}/out"
 adb -s "${DEVICE}" push "${BIN}" "${DEV_DIR}/dashcam_record" >/dev/null
 adb -s "${DEVICE}" push "src/examples/assets/dashcam_road.png" "${DEV_DIR}/src/examples/assets/dashcam_road.png" >/dev/null
 adb -s "${DEVICE}" push "src/examples/assets/flydog.png" "${DEV_DIR}/src/examples/assets/flydog.png" >/dev/null
-adb -s "${DEVICE}" push "src/examples/configs/dashcam_record_android.json" "${DEV_DIR}/src/examples/configs/dashcam_record_android.json" >/dev/null
+adb -s "${DEVICE}" push "${ANDROID_CONFIG}" "${DEV_DIR}/src/examples/configs/$(basename "${ANDROID_CONFIG}")" >/dev/null
 adb -s "${DEVICE}" shell "chmod +x ${DEV_DIR}/dashcam_record"
 
 if [[ "${MODE}" == "push" ]]; then
@@ -90,17 +95,23 @@ fi
 # --- run --------------------------------------------------------------------
 # The android config's asset/output paths target the /data/local test layout
 # (${DEV_DIR}). frame_count = 300 (10s @ 30fps); --seconds=N scales it (fps=30).
-MODE_LABEL="surface mode"
-RUN_ARGS="--config=src/examples/configs/dashcam_record_android.json"
+# Default config = parallel executors (CPU mode); --input-surface overrides.
+MODE_LABEL="CPU memory mode (parallel executors)"
+RUN_ARGS="--config=src/examples/configs/$(basename "${ANDROID_CONFIG}")"
 RUN_ARGS="${RUN_ARGS} --frames=$((CLIP_SECONDS * 30))"
 if [[ -n "${INPUT_SURFACE}" ]]; then
     RUN_ARGS="${RUN_ARGS} ${INPUT_SURFACE}"
-    if [[ "${INPUT_SURFACE}" == "--input-surface=false" ]]; then
-        MODE_LABEL="CPU memory mode"
+    if [[ "${INPUT_SURFACE}" == "--input-surface=true" ]]; then
+        MODE_LABEL="surface mode"
     fi
 fi
 echo "[android] run dashcam_record on ${DEVICE} (${CLIP_SECONDS}s, ${MODE_LABEL})"
-adb -s "${DEVICE}" shell "cd ${DEV_DIR} && ./dashcam_record ${RUN_ARGS}"
+# Time the recording on the device (single run). dashcam_record's own stdout
+# goes to run.log; `time`'s wall/user/sys report goes to run.timing.
+adb -s "${DEVICE}" shell "cd ${DEV_DIR} && { time ./dashcam_record ${RUN_ARGS} ; } 1>/data/local/tmp/run.log 2>/data/local/tmp/run.timing"
+echo "[android] recording time (device):"
+adb shell "cat /data/local/tmp/run.timing" 2>/dev/null | tr -d '\r' | sed 's/^/  [android] /'
+adb shell "cat /data/local/tmp/run.log" 2>/dev/null | tail -20
 
 if [[ "${MODE}" == "run" ]]; then
     echo "[android] run OK (result on device: ${DEV_DIR}/out/dashcam.mp4)"
