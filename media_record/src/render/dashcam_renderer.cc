@@ -6,6 +6,7 @@
 #include <memory>
 #include <utility>
 
+#include "libyuv/scale_argb.h"
 #include "native_ui/core.h"
 #include "native_ui/render.h"
 #include "native_ui/surface.h"
@@ -33,6 +34,12 @@ struct DashcamRenderer::Context {
   std::unique_ptr<native::ui::Surface> surface;
   std::unique_ptr<native::ui::Canvas> canvas;
   const uint8_t* surface_buffer = nullptr;  // data ptr of the buffer the surface wraps
+  // Down-sampled composition buffer + surface/canvas: the scene is drawn at
+  // render_* resolution here, then libyuv ARGBScale enlarges it onto the output
+  // buffer. Owned by the renderer (created once in Create()).
+  native::ui::PixelBuffer comp_buffer;
+  std::unique_ptr<native::ui::Surface> comp_surface;
+  std::unique_ptr<native::ui::Canvas> comp_canvas;
   // Timestamp text paint — configured once and reused across frames.
   native::ui::Paint text_paint;
   // Timestamp draw position + font size — fixed once and reused across frames
@@ -139,12 +146,22 @@ std::unique_ptr<DashcamRenderer> DashcamRenderer::Create(
   r->ctx_->text_pos = native::ui::Point{24.0f * rw / target_width,
                                         48.0f * rh / target_height};
   r->ctx_->text_size = 36.0f * rw / target_width;
+
+  // Down-sampled composition buffer + surface/canvas (owned by the renderer).
+  r->ctx_->comp_buffer =
+      native::ui::Surface::Allocate(rw, rh, native::ui::PixelFormat::kRGBA);
+  if (r->ctx_->comp_buffer.empty()) return nullptr;
+  r->ctx_->comp_surface =
+      native::ui::Surface::CreateFromPixels(r->ctx_->comp_buffer);
+  if (!r->ctx_->comp_surface) return nullptr;
+  r->ctx_->comp_canvas =
+      std::make_unique<native::ui::Canvas>(*r->ctx_->comp_surface);
   return r;
 }
 
 bool DashcamRenderer::Render(int frame_index, const std::string& timestamp,
                              native::ui::PixelBuffer& buffer) {
-  if (!ctx_) return false;
+  if (!ctx_ || !ctx_->comp_canvas) return false;
 
   const size_t needed =
       static_cast<size_t>(target_width_) * static_cast<size_t>(target_height_) *
@@ -157,38 +174,20 @@ bool DashcamRenderer::Render(int frame_index, const std::string& timestamp,
     return false;
   }
 
-  // The surface zero-copy wraps the caller's `buffer`; it does not own it. The
-  // surface + canvas are created once per buffer and reused across frames (the
-  // pipeline reuses the same buffer every frame), avoiding per-frame WrapPixels
-  // and canvas setup. If the caller hands us a different buffer, we rebuild.
-  const uint8_t* buf_ptr = buffer.data.data();
-  if (!ctx_->surface || ctx_->surface_buffer != buf_ptr) {
-    // Reset the canvas FIRST (it holds a raw SkCanvas pointer into the old
-    // surface); otherwise its destructor would touch a freed surface.
-    ctx_->canvas.reset();
-    ctx_->surface = native::ui::Surface::CreateFromPixels(buffer);
-    if (!ctx_->surface) {
-      std::fprintf(stderr,
-                   "DashcamRenderer: Surface::CreateFromPixels failed\n");
-      ctx_->surface_buffer = nullptr;
-      return false;
-    }
-    ctx_->canvas = std::make_unique<native::ui::Canvas>(*ctx_->surface);
-    ctx_->surface_buffer = buf_ptr;
-  }
+  // 1. Draw the shared scene at RENDER resolution into the off-screen comp
+  //    buffer (Skia cost tracks render pixel count, not the target).
+  if (!DrawFrame(*ctx_->comp_canvas, frame_index, timestamp)) return false;
 
-  // Down-sampled rendering: when render_* < target_*, scale the canvas so the
-  // scene (drawn at render resolution) is painted upscaled to fill the full
-  // frame. Skia applies the transform to every draw op, so the per-op cost
-  // tracks render pixel count (much cheaper at 640x360 vs 1280x720), and the
-  // upscale is a single canvas transform — no separate composition buffer.
-  ctx_->canvas->Scale(static_cast<float>(render_width_) / target_width_,
-                      static_cast<float>(render_height_) / target_height_);
-  ctx_->canvas->Save();
-  // Shared scene drawing (background + bouncing dog + timestamp).
-  const bool ok = DrawFrame(*ctx_->canvas, frame_index, timestamp);
-  ctx_->canvas->Restore();
-  return ok;
+  // 2. Upscale the composition to the caller's target buffer via libyuv
+  //    ARGBScale (bi-linear, SIMD on aarch64). This replaces the earlier
+  //    canvas-scale transform, which distorted the scene layout.
+  libyuv::ARGBScale(ctx_->comp_buffer.data.data(),
+                    static_cast<int>(ctx_->comp_buffer.width) * 4,
+                    ctx_->comp_buffer.width, ctx_->comp_buffer.height,
+                    buffer.data.data(), static_cast<int>(buffer.width) * 4,
+                    buffer.width, buffer.height,
+                    libyuv::kFilterBilinear);
+  return true;
 }
 
 // Shared scene: clear + background + bouncing dog + timestamp. Used by both the

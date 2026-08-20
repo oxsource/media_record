@@ -10,6 +10,7 @@ cc_library(
     hdrs = ["dashcam_renderer.h"],
     deps = [
         "//src/framework/debug:debug",
+        "@libyuv//:libyuv",
         "@native_ui//:native_ui",
     ],
     visibility = ["//visibility:public"],
