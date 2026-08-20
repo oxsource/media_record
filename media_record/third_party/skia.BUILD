@@ -19,9 +19,7 @@ cc_library(
             # build needs the Android SkDebug implementation.
             "src/ports/SkDebug_win.cpp",
             "src/ports/SkFontConfigInterface*.cpp",
-            "src/ports/SkFontHost_FreeType*.cpp",
             "src/ports/SkFontMgr_android*.cpp",
-            "src/ports/SkFontMgr_custom*.cpp",
             "src/ports/fontations/**/*.cpp",
             "src/ports/SkFontMgr_fontations*.cpp",
             "src/ports/SkFontMgr_fontconfig*.cpp",
@@ -96,6 +94,7 @@ cc_library(
         "-Wno-unused-parameter",
         "-Wno-deprecated-declarations",
     ],
+    deps = ["@freetype//:freetype"],
     linkopts = select({
         "@native_ui//platforms:macos_arm64": [
             "-framework ApplicationServices",
