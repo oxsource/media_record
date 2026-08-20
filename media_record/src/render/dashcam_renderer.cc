@@ -46,6 +46,8 @@ struct DashcamRenderer::Context {
   // (scaled to render resolution when down-sampling).
   native::ui::Point text_pos{24.0f, 48.0f};
   float text_size = 36.0f;
+  // Registered font family for the timestamp text ("" = framework default).
+  std::string font_family;
   // Fixed background dest rect (full render frame).
   native::ui::Rect bg_dest{0.0f, 0.0f, 0.0f, 0.0f};
   // Dog draw rect — x/w/h are fixed; only y changes per frame (bounce).
@@ -76,11 +78,13 @@ void UpdateDogBounce(native::ui::Rect& dog_dest, int frame_index,
 }  // namespace
 
 DashcamRenderer::DashcamRenderer(int target_width, int target_height,
-                                 int render_width, int render_height)
+                                 int render_width, int render_height,
+                                 std::string font_family)
     : target_width_(target_width),
       target_height_(target_height),
       render_width_(render_width > 0 ? render_width : target_width),
-      render_height_(render_height > 0 ? render_height : target_height) {}
+      render_height_(render_height > 0 ? render_height : target_height),
+      font_family_(std::move(font_family)) {}
 
 DashcamRenderer::~DashcamRenderer() = default;
 
@@ -88,12 +92,32 @@ std::unique_ptr<DashcamRenderer> DashcamRenderer::Create(
     const std::string& background_image_path,
     const std::string& car_image_path,
     int target_width, int target_height,
-    int render_width, int render_height) {
+    int render_width, int render_height,
+    const std::string& font_path) {
   if (target_width <= 0 || target_height <= 0) return nullptr;
   const int rw = render_width > 0 ? render_width : target_width;
   const int rh = render_height > 0 ? render_height : target_height;
   if (rw <= 0 || rh <= 0 || rw > target_width || rh > target_height) {
     return nullptr;
+  }
+
+  // Register the external font (Roboto by default) as the renderer's default
+  // font so the timestamp text renders. On Android the platform default font
+  // may be unavailable/mismatched, which is why the bundled TTF is used.
+  std::string font_family;
+  if (!font_path.empty()) {
+    font_family = "Roboto";
+    native::ui::FontManager& fm = native::ui::FontManager::Default();
+    if (!fm.RegisterFont(font_family, font_path,
+                         native::ui::FontManager::kFontWeightRegular)) {
+      std::fprintf(stderr,
+                   "DashcamRenderer: failed to register font '%s': %s\n",
+                   font_path.c_str(), fm.last_error().c_str());
+    } else if (!fm.SetDefaultFont(font_family)) {
+      std::fprintf(stderr,
+                   "DashcamRenderer: failed to set default font '%s': %s\n",
+                   font_family.c_str(), fm.last_error().c_str());
+    }
   }
 
   auto bg = native::ui::Image::FromFile(background_image_path.c_str());
@@ -123,7 +147,7 @@ std::unique_ptr<DashcamRenderer> DashcamRenderer::Create(
   // give the "near-large / far-small" perspective as the car drives away.
 
   auto r = std::unique_ptr<DashcamRenderer>(
-      new DashcamRenderer(target_width, target_height, rw, rh));
+      new DashcamRenderer(target_width, target_height, rw, rh, font_family));
   r->ctx_ = std::make_unique<Context>();
   r->ctx_->background = std::move(bg);
   r->ctx_->car = std::move(car);
@@ -146,6 +170,7 @@ std::unique_ptr<DashcamRenderer> DashcamRenderer::Create(
   r->ctx_->text_pos = native::ui::Point{24.0f * rw / target_width,
                                         48.0f * rh / target_height};
   r->ctx_->text_size = 36.0f * rw / target_width;
+  r->ctx_->font_family = font_family;
 
   // Down-sampled composition buffer + surface/canvas (owned by the renderer).
   r->ctx_->comp_buffer =
@@ -222,7 +247,11 @@ bool DashcamRenderer::DrawFrame(native::ui::Canvas& canvas, int frame_index,
 
   // Timestamp: top-left, large white font for readability.
   t0 = timer_.Begin();
-  canvas.DrawText(timestamp, ctx_->text_pos, ctx_->text_paint, ctx_->text_size);
+  native::ui::Font font;
+  font.family = ctx_->font_family;  // "" = default font
+  font.weight = native::ui::FontManager::kFontWeightRegular;
+  font.size = ctx_->text_size;
+  canvas.DrawText(timestamp, ctx_->text_pos, ctx_->text_paint, font);
   timer_.Accumulate("timestamp", t0);
   return true;
 }

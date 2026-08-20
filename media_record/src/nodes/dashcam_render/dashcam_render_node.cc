@@ -51,6 +51,7 @@ DashcamRenderNode::DashcamRenderNode(const std::string& name,
   if (const std::string* v = options.Get<std::string>("car")) car_path_ = *v;
   if (const std::string* v = options.Get<std::string>("format"))
     timestamp_format_ = *v;
+  if (const std::string* v = options.Get<std::string>("font")) font_path_ = *v;
   if (timestamp_format_.empty()) timestamp_format_ = "%Y-%m-%d %H:%M:%S";
   if (const int* v = options.Get<int>("width")) width_ = *v;
   if (const int* v = options.Get<int>("height")) height_ = *v;
@@ -103,7 +104,7 @@ absl::Status DashcamRenderNode::Open(graph::runtime::GraphContext& ctx) {
 #endif
   renderer_ = render::DashcamRenderer::Create(
       background_path_, car_path_, width_, height_, render_width_,
-      render_height_);
+      render_height_, font_path_);
   if (!renderer_) {
     return absl::InvalidArgumentError(
         "dashcam_render: failed to load/scale background/dog images "
@@ -151,7 +152,7 @@ absl::Status DashcamRenderNode::EnsureSurfaceRenderer(
         "dashcam_render: RenderContext::CreateFromNativeWindow failed");
   }
   surface_renderer_ = render::DashcamRenderer::Create(
-      background_path_, car_path_, width_, height_);
+      background_path_, car_path_, width_, height_, 0, 0, font_path_);
   if (!surface_renderer_) {
     return absl::InvalidArgumentError(
         "dashcam_render: failed to load/scale background/dog images "

@@ -12,6 +12,7 @@
       "options": {
         "background": "/data/local/tmp/media_record/src/examples/assets/dashcam_road.png",
         "car": "/data/local/tmp/media_record/src/examples/assets/flydog.png",
+        "font": "/data/local/tmp/media_record/src/examples/assets/Roboto-Regular.ttf",
         "width": 1280,
         "height": 720,
         "fps": 30,

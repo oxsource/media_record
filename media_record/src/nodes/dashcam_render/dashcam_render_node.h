@@ -52,6 +52,8 @@ class DashcamRenderNode : public graph::runtime::Node {
   std::string background_path_;
   std::string car_path_;
   std::string timestamp_format_;
+  // Optional external TTF/OTF font path for the timestamp text ("" = default).
+  std::string font_path_;
   int width_ = 1280;
   int height_ = 720;
   int fps_ = 30;

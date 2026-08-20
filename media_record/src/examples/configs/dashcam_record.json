@@ -6,6 +6,7 @@
       "options": {
         "background": "src/examples/assets/dashcam_road.png",
         "car": "src/examples/assets/flydog.png",
+        "font": "src/examples/assets/Roboto-Regular.ttf",
         "width": 1280,
         "height": 720,
         "fps": 30,

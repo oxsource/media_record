@@ -84,6 +84,7 @@ adb -s "${DEVICE}" shell "mkdir -p ${DEV_DIR}/src/examples/assets ${DEV_DIR}/src
 adb -s "${DEVICE}" push "${BIN}" "${DEV_DIR}/dashcam_record" >/dev/null
 adb -s "${DEVICE}" push "src/examples/assets/dashcam_road.png" "${DEV_DIR}/src/examples/assets/dashcam_road.png" >/dev/null
 adb -s "${DEVICE}" push "src/examples/assets/flydog.png" "${DEV_DIR}/src/examples/assets/flydog.png" >/dev/null
+adb -s "${DEVICE}" push "src/examples/assets/Roboto-Regular.ttf" "${DEV_DIR}/src/examples/assets/Roboto-Regular.ttf" >/dev/null
 adb -s "${DEVICE}" push "${ANDROID_CONFIG}" "${DEV_DIR}/src/examples/configs/$(basename "${ANDROID_CONFIG}")" >/dev/null
 adb -s "${DEVICE}" shell "chmod +x ${DEV_DIR}/dashcam_record"
 

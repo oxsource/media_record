@@ -45,11 +45,14 @@ class DashcamRenderer {
   // target, which is much cheaper on CPU (Skia raster cost scales with pixel
   // count — see specs/003-android-adaptation/perf-analysis.md). 0 = no
   // down-sampling (render == target).
+  // `font_path` optionally registers an external TTF/OTF as the renderer's
+  // default font (used for the timestamp text); empty = native default font.
   static std::unique_ptr<DashcamRenderer> Create(
       const std::string& background_image_path,
       const std::string& dog_image_path,
       int target_width, int target_height,
-      int render_width = 0, int render_height = 0);
+      int render_width = 0, int render_height = 0,
+      const std::string& font_path = "");
 
   ~DashcamRenderer();
 
@@ -84,7 +87,7 @@ class DashcamRenderer {
 
  private:
   DashcamRenderer(int target_width, int target_height, int render_width,
-                  int render_height);
+                  int render_height, std::string font_family = "");
 
   // Draws the common scene (clear + background + bouncing dog + timestamp) onto
   // `canvas` (at render_* resolution). Shared by the CPU (PixelBuffer) and
@@ -97,6 +100,8 @@ class DashcamRenderer {
   int target_height_ = 0;
   int render_width_ = 0;   // internal composition width (0 = target)
   int render_height_ = 0;  // internal composition height (0 = target)
+  // Registered font family used for the timestamp text ("" = native default).
+  std::string font_family_;
 
   // native::ui types are forward-declared in the .cc to keep Skia out of this
   // header (Skia isolation).

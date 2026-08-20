@@ -1,9 +1,10 @@
 package(default_visibility = ["//visibility:public"])
 
-# Default simulated-camera input image (spec 002). Consumed as runfiles by the
-# dashcam_record example and its e2e test via $(location) (see T002).
+# Default simulated-camera input image + default timestamp font (spec 002,
+# 003). Consumed as runfiles by the dashcam_record example and its e2e test via
+# $(location) (see T002).
 filegroup(
     name = "assets",
-    srcs = glob(["*.png"]),
+    srcs = glob(["*.png", "*.ttf"]),
     visibility = ["//visibility:public"],
 )
