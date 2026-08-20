@@ -13,7 +13,7 @@ cc_binary(
 # Dashcam recording entry (spec 002 / T020): loads dashcam_record.json
 # (graph_runtime schema, node params in each node's "options" object) and runs
 # the DashcamRenderNode pipeline (DashcamRender -> Encoder -> Recorder -> Muxer)
-# for the default 10s @ 30fps -> out/dashcam.mp4. It drives graph_runtime's own
+# for the default 10s @ 30fps -> out/dashcam_host_cpu.mp4. It drives graph_runtime's own
 # async runtime inline (no runner module); CLI overrides (--output/--frames)
 # use GraphRuntime::Options node-option injection. All node libraries are linked
 # (alwayslink) so their GRAPH_RUNTIME_REGISTER_NODE registrations are present

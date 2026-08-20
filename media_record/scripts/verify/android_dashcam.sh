@@ -105,6 +105,13 @@ if [[ -n "${INPUT_SURFACE}" ]]; then
         MODE_LABEL="surface mode"
     fi
 fi
+# Local output name distinguishes platform (android) + dataflow mode
+# (surface / cpu) so pulled artifacts don't overwrite each other.
+SURFACE_FLAG="cpu"
+if [[ -n "${INPUT_SURFACE}" ]] && [[ "${INPUT_SURFACE}" == "--input-surface=true" ]]; then
+    SURFACE_FLAG="surface"
+fi
+LOCAL_OUT="${ROOT}/out/dashcam_android_${SURFACE_FLAG}.mp4"
 echo "[android] run dashcam_record on ${DEVICE} (${CLIP_SECONDS}s, ${MODE_LABEL})"
 # Time the recording on the device (single run). dashcam_record's own stdout
 # goes to run.log; `time`'s wall/user/sys report goes to run.timing.
@@ -120,11 +127,11 @@ fi
 
 # --- verify: pull + ffprobe/decode check -----------------------------------
 mkdir -p "${ROOT}/out"
-adb -s "${DEVICE}" pull "${DEV_DIR}/out/dashcam.mp4" "${ROOT}/out/dashcam.mp4" >/dev/null
+adb -s "${DEVICE}" pull "${DEV_DIR}/out/dashcam.mp4" "${LOCAL_OUT}" >/dev/null
 
-OUT="${ROOT}/out/dashcam.mp4"
+OUT="${LOCAL_OUT}"
 SIZE="$(wc -c < "$OUT" | tr -d ' ')"
-[ "$SIZE" -gt 0 ] || { echo "[android] FAIL: out/dashcam.mp4 is empty"; exit 1; }
+[ "$SIZE" -gt 0 ] || { echo "[android] FAIL: ${OUT} is empty"; exit 1; }
 
 INFO="$(ffprobe -v error -show_entries stream=codec_name,codec_type,width,height \
         -of default=noprint_wrappers=1 "$OUT")"
@@ -144,4 +151,4 @@ if [[ -n "${DECODE_ERR}" ]]; then
     exit 1
 fi
 
-echo "[android] PASS: valid H.264 MP4 via MediaCodec surface backend ($SIZE bytes)"
+echo "[android] PASS: valid H.264 MP4 via MediaCodec backend ($SIZE bytes)"

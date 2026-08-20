@@ -94,7 +94,7 @@ TEST(PipelineConfigTest, DashcamRecordTopology) {
   EXPECT_EQ(*bitrate, 4000000);
   const std::string* output = config.nodes[3].options.Get<std::string>("output");
   ASSERT_NE(output, nullptr);
-  EXPECT_EQ(*output, "out/dashcam.mp4");
+  EXPECT_EQ(*output, "out/dashcam_host_cpu.mp4");
   const int* muxer_width = config.nodes[3].options.Get<int>("width");
   ASSERT_NE(muxer_width, nullptr);
   EXPECT_EQ(*muxer_width, 1280);

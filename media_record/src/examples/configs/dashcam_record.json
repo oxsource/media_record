@@ -34,7 +34,7 @@
       "name": "muxer",
       "type": "MuxerSinkNode",
       "options": {
-        "output": "out/dashcam.mp4",
+        "output": "out/dashcam_host_cpu.mp4",
         "width": 1280,
         "height": 720,
         "fps": 30

@@ -14,7 +14,7 @@
 // This entry drives graph_runtime's own async runtime inline (no dedicated
 // runner module): Initialize (wires the node-to-node streams) → Start →
 // WaitUntilDone (blocks until the source node exhausts its frame budget) →
-// Shutdown. It writes out/dashcam.mp4, overwriting an existing output with a
+// Shutdown. It writes out/dashcam_host_cpu.mp4, overwriting an existing output with a
 // log notice; any failure prints a locatable error to stderr and exits non-zero
 // without leaving a partial artifact (FR-008/009). A local LifecycleContext
 // (holding pipeline_failed +, on Android, the encoder input surface) is handed
@@ -53,7 +53,7 @@ void PrintUsage(const char* argv0) {
       "  config (true = MediaCodec input surface, false = CPU memory path);\n"
       "  it patches BOTH nodes since they must agree.\n"
       "  (background/car assets + node params come from the JSON 'options')\n"
-      "  -> out/dashcam.mp4\n",
+      "  -> out/dashcam_host_cpu.mp4\n",
       argv0);
 }
 
@@ -122,7 +122,7 @@ int main(int argc, char** argv) {
   // `bazel run` executes with cwd = the target's runfiles copy of the workspace
   // root, so relative paths (config/image/out/) would land in the build tree.
   // BUILD_WORKSPACE_DIRECTORY names the real workspace; chdir there so the
-  // default output `out/dashcam.mp4` appears in the project root.
+  // default output `out/dashcam_host_cpu.mp4` appears in the project root.
   if (const char* ws = std::getenv("BUILD_WORKSPACE_DIRECTORY")) {
     if (::chdir(ws) != 0) {
       std::fprintf(stderr, "error: cannot chdir to workspace '%s'\n", ws);
@@ -159,7 +159,7 @@ int main(int argc, char** argv) {
   if (frames_override > 0) {
     frame_count = frames_override;  // CLI --frames wins over the config.
   }
-  const std::string output_path = config.GetNodeOption<std::string>("MuxerSinkNode", "output", "out/dashcam.mp4");
+  const std::string output_path = config.GetNodeOption<std::string>("MuxerSinkNode", "output", "out/dashcam_host_cpu.mp4");
   if (!MkdirParents(output_path)) {
     std::fprintf(stderr, "error: cannot create output directory for '%s'\n", output_path.c_str());
     return 1;

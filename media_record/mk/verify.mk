@@ -31,9 +31,9 @@ verify:
 	@test -s $(OUT_DIR)/render_demo_000.png || { echo "[verify] FAIL: render-demo PNG missing"; exit 1; }
 	@echo "==> [verify] (4/5) run //src/examples:dashcam_record (default 10s recording)"
 	@$(BAZEL) run //src/examples:dashcam_record
-	@echo "==> [verify] (5/5) recording artifact check: out/dashcam.mp4"
-	@test -s out/dashcam.mp4 || { echo "[verify] FAIL: out/dashcam.mp4 missing or empty"; exit 1; }
-	@head -c 8 out/dashcam.mp4 | grep -q "ftyp" || { echo "[verify] FAIL: out/dashcam.mp4 is not an MP4"; exit 1; }
+	@echo "==> [verify] (5/5) recording artifact check: out/dashcam_host_cpu.mp4"
+	@test -s out/dashcam_host_cpu.mp4 || { echo "[verify] FAIL: out/dashcam_host_cpu.mp4 missing or empty"; exit 1; }
+	@head -c 8 out/dashcam_host_cpu.mp4 | grep -q "ftyp" || { echo "[verify] FAIL: out/dashcam_host_cpu.mp4 is not an MP4"; exit 1; }
 	@echo "[verify] ALL GREEN: build + tests + render + recording artifact"
 
 clean:
