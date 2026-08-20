@@ -114,7 +114,7 @@ cc_library(
     name = "skia_gpu",
     hdrs = glob(["include/**/*.h"]),
     srcs = glob(
-        ["src/gpu/**/*.cpp", "src/android/**/*.cpp"],
+        ["src/gpu/**/*.cpp", "src/text/**/*.cpp", "src/android/**/*.cpp"],
         exclude = [
             "src/gpu/graphite/**/*.cpp",
             "src/gpu/vk/**/*.cpp",
