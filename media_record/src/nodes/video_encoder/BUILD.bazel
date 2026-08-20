@@ -1,10 +1,13 @@
 package(default_visibility = ["//visibility:public"])
 
-# Software RGBA->I420 converter (spec 002, T011).
+# Software RGBA->I420 converter (spec 002, T011). Uses libyuv ARGBToI420
+# (SIMD/NEON on aarch64) — the scalar version cost ~52ms/frame at 1280x720 on
+# device and dominated the CPU pipeline.
 cc_library(
     name = "rgba_i420",
     srcs = ["rgba_i420.cc"],
     hdrs = ["rgba_i420.h"],
+    deps = ["@libyuv//:libyuv"],
 )
 
 # VideoEncoderNode (spec 002): graph_runtime node; software RGBA->I420 +

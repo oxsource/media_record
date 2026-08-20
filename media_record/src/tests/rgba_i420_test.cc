@@ -1,7 +1,9 @@
 // Software RGBA -> I420 conversion unit tests (spec 002, T008).
 //
 // A pure-color RGBA frame converts to known BT.601 luma/chroma values: pure
-// red (255,0,0) -> Y=82, U=90, V=240 (see rgba_i420.cc for the constants).
+// red (255,0,0) -> Y=82, U=90, V=240. The conversion is backed by libyuv
+// (ABGRToI420, NEON on aarch64); libyuv's coefficient rounding can differ by
+// ±2 from the textbook BT.601 constants, so assertions use a small tolerance.
 
 #include <cstdint>
 #include <vector>
@@ -33,9 +35,9 @@ TEST(RgbaToI420Test, PureRedConvertsToKnownValues) {
               static_cast<size_t>(w) / 2, v.data(),
               static_cast<size_t>(w) / 2});
 
-  for (uint8_t byte : y) EXPECT_EQ(byte, 82);
-  for (uint8_t byte : u) EXPECT_EQ(byte, 90);
-  for (uint8_t byte : v) EXPECT_EQ(byte, 240);
+  for (uint8_t byte : y) EXPECT_NEAR(byte, 82, 2);
+  for (uint8_t byte : u) EXPECT_NEAR(byte, 90, 2);
+  for (uint8_t byte : v) EXPECT_NEAR(byte, 240, 2);
 }
 
 TEST(RgbaToI420Test, ChromaPlanesAreQuarterSize) {

@@ -178,14 +178,10 @@ bool DashcamRenderer::DrawFrame(native::ui::Canvas& canvas, int frame_index,
 
   // Dog (flydog): fixed size, centered horizontally; the bounce animation
   // updates dog_dest.y each frame (x/w/h were pre-computed at Create()).
+  // DrawImage(image, dest) scales at draw time (drawImageRect) — no per-frame
+  // Scale() allocation.
   UpdateDogBounce(ctx_->dog_dest, frame_index, target_height_);
-  // Scale() returns nullptr when the source is already at/below the target
-  // size (native_ui "no resize needed" contract); in that case fall back to the
-  // original image and let Skia scale it into the dest rect.
-  auto dog_frame = ctx_->car->Scale(static_cast<int>(ctx_->dog_dest.width),
-                                    static_cast<int>(ctx_->dog_dest.height));
-  const native::ui::Image& to_draw = dog_frame ? *dog_frame : *ctx_->car;
-  canvas.DrawImage(to_draw, ctx_->dog_dest);
+  canvas.DrawImage(*ctx_->car, ctx_->dog_dest);
 
   // Timestamp: top-left, large white font for readability.
   canvas.DrawText(timestamp, ctx_->text_pos, ctx_->text_paint, ctx_->text_size);
